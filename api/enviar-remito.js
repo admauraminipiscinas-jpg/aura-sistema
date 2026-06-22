@@ -4,7 +4,7 @@
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import 'jspdf-autotable';
 
 const montoAR = n => Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -22,7 +22,7 @@ function generarPDF(v) {
   doc.text('Vendedor: ' + (v.vendedor || ''), W - M, M + 60, { align: 'right' });
   doc.setFont('helvetica', 'bold'); doc.text('Cliente: ', M, M + 84);
   doc.setFont('helvetica', 'normal'); doc.text(String(v.cliente || ''), M + 48, M + 84);
-  autoTable(doc, {
+  doc.autoTable({
     startY: M + 100,
     head: [['Producto / Servicio', 'Cant.', 'Precio unit.', 'Subtotal']],
     body: (v.items || []).map(i => [i.nombre, String(i.cant), montoAR(i.precio), montoAR(i.precio * i.cant)]),
