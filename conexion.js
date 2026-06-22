@@ -81,9 +81,12 @@ window.confirmarVenta = async function(){
   if(items.length){ const r=await SB.from('venta_items').insert(items); if(r.error){ toast("⚠️ Venta guardada, pero error en ítems: "+r.error.message); } }
   // Envío automático del remito por mail (no bloquea la pantalla)
   if(remito && c.mail){
+    const _h=new Date();
+    const fechaRemito=`${String(_h.getDate()).padStart(2,'0')}/${String(_h.getMonth()+1).padStart(2,'0')}/${_h.getFullYear()}`;
+    const localidadRemito=`${c.localidad||''}${c.provincia?` (${c.provincia})`:''}`;
     SB.auth.getSession().then(({data:{session}})=>{
       fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
-        body:JSON.stringify({venta:{nro,cliente:`${c.nombre} ${c.apellido}`,vendedor:nombreUsuario(),total,email:c.mail,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
+        body:JSON.stringify({venta:{nro,cliente:`${c.nombre} ${c.apellido}`,dni:c.dni||'',telefono:c.tel||'',localidad:localidadRemito,vendedor:nombreUsuario(),fecha:fechaRemito,total,saldo:total-cobrado,email:c.mail,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
       }).then(r=>r.json()).then(j=>{ if(!j.ok) console.warn('Remito mail:',j.error); }).catch(e=>console.warn('Remito mail:',e));
     });
   }

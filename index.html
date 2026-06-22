@@ -1015,20 +1015,19 @@ function descargarRemitoPDF(nro){
   doc.setFontSize(9); doc.text(`Vendedor: ${v.vendedor}`, W-M-12, top+38, {align:"right"});
   doc.setFont("helvetica","normal"); doc.text(`Fecha de emisión: ${fmtFechaCorta(v.fecha)}`, W-M-12, top+52, {align:"right"});
 
-  // Datos del cliente
-  let cy=top+66; doc.setLineWidth(1); doc.rect(M, cy, W-2*M, 38);
-  doc.setFontSize(9);
-  doc.setFont("helvetica","bold"); doc.text("CUIT:", M+10, cy+15);
-  doc.setFont("helvetica","normal"); doc.text("0", M+42, cy+15);
-  doc.setFont("helvetica","bold"); doc.text("Condición frente al IVA:", M+10, cy+30);
-  doc.setFont("helvetica","normal"); doc.text("Consumidor Final", M+138, cy+30);
-  doc.setFont("helvetica","bold"); doc.text("Apellido y Nombre / Razón Social:", W-M-10, cy+15, {align:"right"});
-  doc.setFont("helvetica","normal"); doc.text(`${v.cliente}`, W-M-10, cy+28, {align:"right"});
-  doc.text(`DNI: ${c.dni||'—'}   Teléfono: ${c.tel||'—'}`, W-M-10, cy+38, {align:"right"});
+  // Datos del cliente (DNI, Localidad, Apellido y Nombre, Teléfono)
+  let cy=top+66; doc.setLineWidth(1); doc.rect(M, cy, W-2*M, 54);
+  doc.setFontSize(9); doc.setTextColor(0);
+  const kv=(x,yy,label,value)=>{ doc.setFont("helvetica","bold"); doc.text(label,x,yy); const w=doc.getTextWidth(label); doc.setFont("helvetica","normal"); doc.text(" "+String(value==null||value===''?'—':value), x+w, yy); };
+  kv(M+10, cy+16, "DNI:", c.dni);
+  kv(M+10, cy+32, "Localidad:", v.localidad);
+  kv(M+10, cy+48, "Condición frente al IVA:", "Consumidor Final");
+  kv(W/2+8, cy+16, "Apellido y Nombre:", v.cliente);
+  kv(W/2+8, cy+32, "Teléfono:", c.tel);
 
   // Tabla de ítems
   doc.autoTable({
-    startY: cy+48,
+    startY: cy+64,
     head: [["Código","Producto / Servicio","Cantidad","U. Medida","Precio unit.","% Bonif","Imp. Bonif.","Subtotal"]],
     body: items.length ? items.map(i=>["", i.nombre, (i.cant||0).toFixed(3), "Unidades", montoAR(i.precio), "0,00", "0,00", montoAR(i.precio*i.cant)]) : [["","Sin ítems","","","","","",""]],
     styles:{ fontSize:8, cellPadding:3, lineColor:[210,210,210], lineWidth:0.3 },
@@ -1037,26 +1036,32 @@ function descargarRemitoPDF(nro){
     margin:{ left:M, right:M }, theme:"grid"
   });
 
-  // Totales
-  let y=doc.lastAutoTable.finalY+20;
-  doc.setFont("helvetica","bold"); doc.setFontSize(9);
-  doc.text(`Total piezas: ${piezas}`, W-M, y, {align:"right"}); y+=18;
+  // Totales al PIE de la hoja (el medio queda en blanco)
+  const H=doc.internal.pageSize.getHeight();
+  let y=Math.max(doc.lastAutoTable.finalY+30, H-175);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(0);
+  doc.text(`Total piezas: ${piezas}`, W-M, y, {align:"right"}); y+=10;
+  doc.setLineWidth(0.5); doc.line(M, y, W-M, y); y+=16;
   const linea=(lbl,val,under)=>{
-    doc.text(lbl, W-M-95, y, {align:"right"});
+    doc.setFont("helvetica","bold"); doc.setFontSize(9);
+    doc.text(lbl, W-M-115, y, {align:"right"});
     doc.text(val, W-M, y, {align:"right"});
-    if(under) doc.line(W-M-60, y+2, W-M, y+2);
-    y+=15;
+    if(under){ doc.setLineWidth(0.6); doc.line(W-M-72, y+2, W-M, y+2); }
+    y+=16;
   };
   linea("Subtotal: ARS", montoAR(v.total));
   linea("Importe otros tributos: ARS", "0,00");
   linea("Importe total: ARS", montoAR(v.total), true);
+  y+=4;
   linea("Total recibido: ARS", montoAR(v.total-v.saldo));
   linea("Saldo adeudado: ARS", montoAR(v.saldo), true);
 
-  y+=12; doc.setFont("helvetica","bold"); doc.setFontSize(9);
+  y+=10; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(90);
+  doc.text("Pag. 1/1", W/2, y, {align:"center"});
+  y+=16; doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(0);
   doc.text("Documento no válido como factura", M, y);
-  y+=26; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text("Comprobante generado por el Sistema de Gestión de Aura Minipiscinas — aura.minipiscinas", W/2, y, {align:"center"});
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
+  doc.text("Aura Minipiscinas — Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas", W/2, H-28, {align:"center"});
 
   doc.save(`Venta_nro_${v.nro}_Comprobante_R.pdf`);
   toast(`✅ PDF del remito de la venta #${v.nro} generado`);
