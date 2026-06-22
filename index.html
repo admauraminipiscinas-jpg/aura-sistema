@@ -1309,7 +1309,7 @@ function abrirModalUsuario(i){
             <div class="field"><label>Apellido <span class="req">*</span></label><input id="uAp" value="${ed?(u.ap||'').replace(/"/g,'&quot;'):''}"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>Nombre de usuario <span class="req">*</span></label><input id="uUser" value="${ed?(u.user||'').replace(/"/g,'&quot;'):''}" placeholder="con el que inicia sesión"></div>
+            <div class="field"><label>Email (con el que inicia sesión) <span class="req">*</span></label><input id="uUser" type="email" value="${ed?(u.user||'').replace(/"/g,'&quot;'):''}" placeholder="vendedor@correo.com"></div>
             <div class="field"><label>Contraseña <span class="req">*</span></label><input id="uPass" type="password" value="${ed?(u.pass||''):''}" placeholder="••••••"></div>
           </div>
           <div class="row" style="margin-top:12px">

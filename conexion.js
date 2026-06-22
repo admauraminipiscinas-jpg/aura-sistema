@@ -77,6 +77,14 @@ window.confirmarVenta = async function(){
   const nro=data.id;
   const items=carrito.map(i=>({venta_id:nro,nombre:i.nombre,precio:i.precio,cantidad:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat||null}));
   if(items.length){ const r=await SB.from('venta_items').insert(items); if(r.error){ toast("⚠️ Venta guardada, pero error en ítems: "+r.error.message); } }
+  // Envío automático del remito por mail (no bloquea la pantalla)
+  if(remito && c.mail){
+    SB.auth.getSession().then(({data:{session}})=>{
+      fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+        body:JSON.stringify({venta:{nro,cliente:`${c.nombre} ${c.apellido}`,vendedor:nombreUsuario(),total,email:c.mail,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
+      }).then(r=>r.json()).then(j=>{ if(!j.ok) console.warn('Remito mail:',j.error); }).catch(e=>console.warn('Remito mail:',e));
+    });
+  }
   VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,saldo:total-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
   toast(`✅ Venta #${nro} guardada`+(remito?` · remito a ${c.mail}`:""));
   nav("ventas");
@@ -150,6 +158,18 @@ window.guardarUsuario=async function(i){
     if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
     Object.assign(u,{nombre,ap,user,rol,activo}); cerrarModal(); viewUsuarios(); toast("✅ Usuario actualizado");
   } else {
-    cerrarModal(); toast("ℹ️ El alta de usuarios nuevos se hace desde Supabase por seguridad (lo configuramos juntos).");
+    const pass = $("#uPass").value;
+    if(!pass){ $("#uPass").classList.add("err"); toast("⚠️ Asigná una contraseña"); return; }
+    if(!/^\S+@\S+\.\S+$/.test(user)){ $("#uUser").classList.add("err"); toast("⚠️ El usuario tiene que ser un email válido (con eso inicia sesión)"); return; }
+    const { data:{ session } } = await SB.auth.getSession();
+    toast("Creando usuario…");
+    let j;
+    try{
+      const r = await fetch('/api/crear-usuario', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')}, body: JSON.stringify({ email:user, password:pass, nombre, apellido:ap, usuario:user, rol }) });
+      j = await r.json();
+      if(!r.ok){ toast("⚠️ "+(j.error||'No se pudo crear el usuario')); return; }
+    }catch(ex){ toast("⚠️ Error de conexión al crear el usuario"); return; }
+    USUARIOS.push({ id:j.id, nombre, ap, user, rol, activo:true, pass:'••••' });
+    cerrarModal(); viewUsuarios(); toast("✅ Usuario creado");
   }
 };

@@ -1,0 +1,12 @@
+{
+  "name": "aura-sistema",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "nodemailer": "^6.9.14",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2"
+  }
+}
