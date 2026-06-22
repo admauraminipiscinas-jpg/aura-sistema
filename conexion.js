@@ -101,18 +101,20 @@ window.guardarCliente = async function(){
   if(!/^\S+@\S+\.\S+$/.test(mail)){ campos.mail.classList.add("err"); toast("⚠️ Revisá el email del cliente"); return; }
   const datos={nombre:campos.nombre.value.trim(),apellido:campos.apellido.value.trim(),dni:campos.dni.value.trim(),tel:campos.tel.value.trim(),provincia:campos.provincia.value,localidad:campos.localidad.value.trim(),mail};
   const fila={nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,telefono:datos.tel,email:datos.mail,provincia:datos.provincia,localidad:datos.localidad};
-  if(modalModo==="venta" && clienteActual){
-    const r=await SB.from('clientes').update(fila).eq('id',clienteActual.id); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
-    Object.assign(clienteActual,datos);
-    const reg=CLIENTES.find(x=>x.id===clienteActual.id); if(reg) Object.assign(reg,{nombre:`${datos.nombre} ${datos.apellido}`,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad});
+  const editId = (modalModo==="venta" && clienteActual) ? clienteActual.id
+               : (typeof clienteEditId!=="undefined" && clienteEditId!=null) ? clienteEditId : null;
+  if(editId!=null){
+    const r=await SB.from('clientes').update(fila).eq('id',editId); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
+    if(modalModo==="venta" && clienteActual) Object.assign(clienteActual,datos);
+    const reg=CLIENTES.find(x=>x.id===editId); if(reg) Object.assign(reg,{nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad});
   } else {
     const {data,error}=await SB.from('clientes').insert(fila).select().single(); if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return; }
     const id=data.id;
-    CLIENTES.push({id,nombre:`${datos.nombre} ${datos.apellido}`,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,saldo:0,activo:true});
+    CLIENTES.push({id,nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,saldo:0,activo:true});
     if(modalModo==="venta") clienteActual={id,...datos};
   }
   cerrarModal();
-  if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); } else { viewClientes(); toast("✅ Cliente agregado"); }
+  if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); } else { viewClientes(); toast("✅ Cliente guardado"); }
 };
 
 /* ---- Guardado: PRODUCTO (alta/edición) ---- */

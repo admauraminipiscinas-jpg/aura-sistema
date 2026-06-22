@@ -230,6 +230,7 @@ let carrito = [];          // items de la venta en curso
 let vProdSel = null;       // producto elegido en el buscador de Vender
 let clienteActual = null;  // cliente cargado para la venta en curso
 let modalModo = "venta";   // "venta" | "clientes"
+let clienteEditId = null;  // id del cliente que se edita desde la lista de Clientes
 
 /* ====== USUARIO ACTIVO + ROLES + PERMISOS ====== */
 const ROLES = ["Vendedor","Administrador","Maestro"];
@@ -446,10 +447,12 @@ function renderClienteBox(){
     </div>`;
 }
 
-function abrirModalCliente(modo){
+function abrirModalCliente(modo, id){
   modalModo = modo || "venta";
-  const editando = modalModo==="venta" && !!clienteActual;
-  const c = editando ? clienteActual : {};
+  clienteEditId = (modalModo==="clientes" && id!=null) ? id : null;
+  let editando = false, c = {};
+  if(modalModo==="venta" && clienteActual){ editando = true; c = clienteActual; }
+  else if(clienteEditId!=null){ const reg = CLIENTES.find(x=>x.id===clienteEditId); if(reg){ editando = true; c = reg; } }
   $("#modalRoot").innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
       <div class="modal">
@@ -1152,7 +1155,7 @@ function viewClientes(){
       <div class="toolbar"><span class="legend">${CLIENTES.length} clientes</span><button class="btn btn-blue" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button></div>
       <table>
         <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Saldo</th><th>Estado</th>${puedeGestionar()?'<th>Acciones</th>':''}</tr></thead>
-        <tbody>${CLIENTES.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${c.nombre}</b></td><td>${c.dni||'—'}</td><td>${c.tel}</td><td>${c.mail}</td><td>${c.localidad||'—'}</td><td>${c.provincia||'—'}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${puedeGestionar()?`<td class="acts"><button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join("")}</tbody>
+        <tbody>${CLIENTES.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${c.nombre} ${c.apellido||''}</b></td><td>${c.dni||'—'}</td><td>${c.tel}</td><td>${c.mail}</td><td>${c.localidad||'—'}</td><td>${c.provincia||'—'}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${puedeGestionar()?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join("")}</tbody>
       </table>
     </div>`;
 }
