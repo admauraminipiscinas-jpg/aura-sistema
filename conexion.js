@@ -35,7 +35,9 @@ async function cargarTodo(){
 
 /* ---- Login real con Supabase Auth ---- */
 window.ingresar = async function(){
-  const email=$("#logUser").value.trim(), pass=$("#logPass").value;
+  const raw=$("#logUser").value.trim();
+  const email=raw.includes('@') ? raw.toLowerCase() : raw.toLowerCase().replace(/\s+/g,'-')+'@aura.local';
+  const pass=$("#logPass").value;
   $("#logErr").style.color=""; $("#logErr").textContent="Ingresando…";
   const {data,error}=await SB.auth.signInWithPassword({email,password:pass});
   if(error){ $("#logErr").textContent="Usuario o contraseña incorrectos."; return; }
@@ -160,16 +162,18 @@ window.guardarUsuario=async function(i){
   } else {
     const pass = $("#uPass").value;
     if(!pass){ $("#uPass").classList.add("err"); toast("⚠️ Asigná una contraseña"); return; }
-    if(!/^\S+@\S+\.\S+$/.test(user)){ $("#uUser").classList.add("err"); toast("⚠️ El usuario tiene que ser un email válido (con eso inicia sesión)"); return; }
+    const userNorm = user.toLowerCase().replace(/\s+/g,'-');
+    if(!/^[a-z0-9._-]+$/.test(userNorm)){ $("#uUser").classList.add("err"); toast("⚠️ El usuario solo puede tener letras, números, puntos o guiones (sin espacios ni acentos)"); return; }
+    const email = userNorm+'@aura.local';
     const { data:{ session } } = await SB.auth.getSession();
     toast("Creando usuario…");
     let j;
     try{
-      const r = await fetch('/api/crear-usuario', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')}, body: JSON.stringify({ email:user, password:pass, nombre, apellido:ap, usuario:user, rol }) });
+      const r = await fetch('/api/crear-usuario', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')}, body: JSON.stringify({ email, password:pass, nombre, apellido:ap, usuario:userNorm, rol }) });
       j = await r.json();
       if(!r.ok){ toast("⚠️ "+(j.error||'No se pudo crear el usuario')); return; }
     }catch(ex){ toast("⚠️ Error de conexión al crear el usuario"); return; }
-    USUARIOS.push({ id:j.id, nombre, ap, user, rol, activo:true, pass:'••••' });
+    USUARIOS.push({ id:j.id, nombre, ap, user:userNorm, rol, activo:true, pass:'••••' });
     cerrarModal(); viewUsuarios(); toast("✅ Usuario creado");
   }
 };

@@ -149,11 +149,11 @@
   <div class="login-card">
     <img id="loginLogo" class="login-logo" alt="Aura">
     <div class="login-sub">MINIPISCINAS · SISTEMA DE GESTIÓN</div>
-    <div class="field" style="text-align:left;margin-bottom:14px"><label>Email</label><input id="logUser" type="email" autocomplete="username" placeholder="tu@correo.com" onkeydown="if(event.key==='Enter')ingresar()"></div>
+    <div class="field" style="text-align:left;margin-bottom:14px"><label>Usuario</label><input id="logUser" type="text" autocomplete="username" placeholder="tu usuario" onkeydown="if(event.key==='Enter')ingresar()"></div>
     <div class="field" style="text-align:left;margin-bottom:8px"><label>Contraseña</label><input id="logPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')ingresar()"></div>
     <div id="logErr" class="login-err"></div>
     <button class="btn btn-green" style="width:100%;justify-content:center;font-size:16px" onclick="ingresar()">Ingresar</button>
-    <div class="login-hint">Ingresá con tu <b>email</b> y tu <b>contraseña</b>.<br>Maestro: adm.auraminipiscinas@gmail.com</div>
+    <div class="login-hint">Ingresá con tu <b>usuario</b> y tu <b>contraseña</b>.<br>Maestro: usá tu email adm.auraminipiscinas@gmail.com</div>
   </div>
 </div>
 
@@ -1309,7 +1309,7 @@ function abrirModalUsuario(i){
             <div class="field"><label>Apellido <span class="req">*</span></label><input id="uAp" value="${ed?(u.ap||'').replace(/"/g,'&quot;'):''}"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>Email (con el que inicia sesión) <span class="req">*</span></label><input id="uUser" type="email" value="${ed?(u.user||'').replace(/"/g,'&quot;'):''}" placeholder="vendedor@correo.com"></div>
+            <div class="field"><label>Usuario (con el que inicia sesión) <span class="req">*</span></label><input id="uUser" type="text" value="${ed?(u.user||'').replace(/"/g,'&quot;'):''}" placeholder="ej: noe-aura"></div>
             <div class="field"><label>Contraseña <span class="req">*</span></label><input id="uPass" type="password" value="${ed?(u.pass||''):''}" placeholder="••••••"></div>
           </div>
           <div class="row" style="margin-top:12px">
