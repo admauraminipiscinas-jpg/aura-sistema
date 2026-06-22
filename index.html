@@ -95,9 +95,15 @@
   table{width:100%;border-collapse:collapse}
   th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--linea);font-size:14px}
   th{font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);background:#fafbfc}
-  th.th-sort{cursor:pointer;user-select:none;white-space:nowrap}
+  th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;font-weight:700;color:#374151}
   th.th-sort:hover{color:var(--verde2);background:#f1f5f4}
   tbody tr:hover{background:#f7faf9}
+  .tabla-ventas td{font-size:12px;padding:8px 10px}
+  .tabla-ventas th{font-size:11px;padding:8px 10px}
+  .tabla-ventas tbody tr{background:#eef4f1}
+  .tabla-ventas tbody tr:nth-child(even){background:#e5efea}
+  .tabla-ventas tbody tr:hover{background:#dbe8e2}
+  .tabla-ventas tbody tr.cancelada{background:#fef2f2}
   .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
   .b-prod{background:#fff4d6;color:#946c00}
   .b-fab{background:#e0edff;color:#1a68d1}
@@ -310,6 +316,7 @@ let estadoDraft = []; // copia de trabajo al editar el catálogo
 let ventasQuery = "", ventasEstado = "", ventasVendedor = "";
 let ventasDesde = "", ventasHasta = "", ventasFiltrosOpen = false, ventasInit = false;
 let ventasSort = {key:"nro", dir:"desc"};
+let ventasLimite = "10";
 
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600);}
 function toggleMenu(){$("#side").classList.toggle("open");}
@@ -690,14 +697,21 @@ function viewVentas(){
 
     <div class="card">
       <div class="toolbar">
-        <span class="legend" id="ventasInfo"></span>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span class="legend">Mostrar
+            <select id="selLimite" style="width:auto;display:inline-block;padding:5px 8px;font-size:12px;margin:0 2px" onchange="ventasLimite=this.value;renderTablaVentas()">
+              ${["10","50","100","todas"].map(o=>`<option value="${o}" ${ventasLimite===o?'selected':''}>${o==="todas"?"Todas":o}</option>`).join("")}
+            </select>
+            registros</span>
+          <span class="legend" id="ventasInfo"></span>
+        </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-green" onclick="exportarExcel()" title="Exportar a Excel las ventas del rango y filtros actuales">📊 Excel</button>
           ${puedeGestionar()?`<button class="btn btn-ghost" onclick="abrirGestionEstados()">⚙️ Estados</button>`:''}
           <button class="btn btn-blue" onclick="nav('vender')">＋ Nueva Venta</button>
         </div>
       </div>
-      <table>
+      <table class="tabla-ventas">
         <thead><tr>
           ${thSort("Nro.","nro")}${thSort("Fecha","fecha")}${thSort("Entrega","entrega")}${thSort("Cliente","cliente")}${thSort("Localidad","localidad")}
           ${thSort("Total","total")}${thSort("Saldo","saldo")}${thSort("Estado","estado")}${thSort("Vendedor","vendedor")}
@@ -766,12 +780,15 @@ function exportarExcel(){
 
 function renderTablaVentas(){
   const tb=$("#tVentas"); if(!tb) return;
-  const rows=ventasFiltradas();
+  const allRows=ventasFiltradas();
+  const total=allRows.length;
+  const lim=(ventasLimite==='todas') ? total : (parseInt(ventasLimite,10)||10);
+  const rows=allRows.slice(0,lim);
   const info=$("#ventasInfo");
   if(info){
     const rango=(ventasDesde||ventasHasta) ? `· ${fmtFechaCorta(ventasDesde)} a ${fmtFechaCorta(ventasHasta)}` : "· todo el período";
-    const canc=rows.filter(v=>v.cancelada).length;
-    info.textContent=`${rows.length} venta${rows.length===1?'':'s'} ${rango}`+(canc?` · ${canc} cancelada${canc===1?'':'s'}`:"");
+    const canc=allRows.filter(v=>v.cancelada).length;
+    info.textContent=`Mostrando ${rows.length} de ${total} ${rango}`+(canc?` · ${canc} cancelada${canc===1?'':'s'}`:"");
   }
   tb.innerHTML=rows.length?rows.map(v=>{
     const canc=v.cancelada;
