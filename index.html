@@ -176,6 +176,26 @@
   .login-welcome{font-size:15px;font-weight:700;color:var(--verde);margin-bottom:22px;line-height:1.4}
   .login-err{color:var(--rojo);font-size:13px;font-weight:600;min-height:18px;margin-bottom:8px}
   .login-hint{font-size:11px;color:var(--muted);margin-top:18px;line-height:1.6}
+  /* Menú "Ver más" (acciones secundarias de Ventas) */
+  .vmenu-wrap{position:relative;display:inline-block}
+  .vmenu{position:absolute;right:0;top:calc(100% + 6px);z-index:35;background:#fff;border:1px solid var(--linea);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;min-width:215px;display:none}
+  .vmenu.show{display:block}
+  .vmenu button{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:#374151;font-family:inherit;font-size:13px;font-weight:600;text-align:left;padding:9px 11px;border-radius:8px;cursor:pointer}
+  .vmenu button:hover,.vmenu button:focus{background:#f3f6f5;color:var(--verde2);outline:none}
+  .vmenu button:disabled{opacity:.45;cursor:default;background:none;color:#9ca3af}
+  /* Ranking de vendedores (leaderboard) */
+  .lb-top{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .lb-card{flex:1;min-width:190px;border-radius:14px;padding:16px 18px;border:1px solid var(--linea);background:#fff;box-shadow:var(--sombra)}
+  .lb-card .pos{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;display:flex;align-items:center;gap:7px}
+  .lb-card .pos .medal{font-size:22px}
+  .lb-card .name{font-size:20px;font-weight:800;margin:4px 0 8px}
+  .lb-card .big{font-size:30px;font-weight:800;line-height:1;color:var(--verde2)}
+  .lb-card .big small{font-size:13px;font-weight:600;color:var(--muted)}
+  .lb-card .sub{font-size:12px;color:var(--muted);margin-top:8px}
+  .lb-1{background:linear-gradient(180deg,#fffbeb,#fff);border-color:#f0d27a}
+  .lb-2{background:linear-gradient(180deg,#f6f7f9,#fff);border-color:#cbd5e1}
+  .lb-row-1 td{background:#fffbeb}
+  .lb-row-2 td{background:#f6f7f9}
 </style>
 </head>
 <body>
@@ -288,6 +308,7 @@ const PERMISOS_LISTA = [
   {k:"ver_usuarios",       t:"Acceder a Usuarios"},
   {k:"ver_reportes",       t:"Acceder a Reportes"},
   {k:"ver_auditoria",      t:"Acceder a Auditoría / Historial"},
+  {k:"ver_ranking",        t:"Acceder a la sección Equipo de ventas"},
   {k:"editar_venta",       t:"Editar ventas (productos, notas, pagos, IVA)"},
   {k:"cancelar_venta",     t:"Cancelar ventas"},
   {k:"cambiar_estado",     t:"Cambiar el estado de las ventas"},
@@ -299,9 +320,9 @@ const PERMISOS_LISTA = [
 ];
 /* Valores por defecto (se sobreescriben con lo guardado en la base) */
 const PERMISOS_DEFAULT = {
-  "Administrador":{ver_vender:1,ver_ventas:1,ver_clientes:1,ver_productos:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
-  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_clientes:0,ver_productos:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
-  "Producción":   {ver_vender:0,ver_ventas:1,ver_clientes:0,ver_productos:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
+  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:1,ver_productos:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
+  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
+  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
 };
 let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
@@ -313,12 +334,13 @@ function esMaestro(){ return USUARIO_ACTUAL.rol==="Maestro"; }
 /* Motor de permisos: el Maestro siempre puede todo; el resto según la matriz configurable. */
 function puede(k){ if(esMaestro()) return true; const r=PERMISOS[USUARIO_ACTUAL.rol]; return !!(r && r[k]); }
 function puedeUsuarios(){ return puede("gestionar_usuarios"); }  // compat: gestionar usuarios/roles
-const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
+const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",ranking:"ver_ranking",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
 function tabsPermitidas(){ return Object.keys(TAB_PERM).filter(t=>puede(TAB_PERM[t])); }
 
 const TABS = [
   {id:"vender",   ic:"🛒", txt:"Vender"},
   {id:"ventas",   ic:"📋", txt:"Ventas"},
+  {id:"ranking",  ic:"🤝", txt:"Equipo de ventas"},
   {id:"clientes", ic:"👥", txt:"Clientes"},
   {id:"productos",ic:"🏷️", txt:"Productos"},
   {id:"usuarios", ic:"🔐", txt:"Usuarios"},
@@ -414,7 +436,7 @@ function nav(v){
   vistaActual = v;
   renderSidebar();
   $("#side").classList.remove("open");
-  ({vender:viewVender,ventas:viewVentas,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
+  ({vender:viewVender,ventas:viewVentas,ranking:viewRanking,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
 }
 
 /* ====== VENDER (simplificado) ====== */
@@ -758,9 +780,9 @@ function entregaCell(v){
   if(v.estado==="Entregado al Cliente" || v.estado==="En servicio de Post Venta") return `${f}<br><span class="cont cont-ok">✓ Entregado</span>`;
   if(v.estado==="Presupuesto") return f;
   const d=diffDias(v.entrega);
-  if(d>0)  return `${f}<br><span class="cont cont-rest">${d} día${d===1?'':'s'} restante${d===1?'':'s'}</span>`;
-  if(d===0) return `${f}<br><span class="cont cont-hoy">Vence hoy</span>`;
-  const r=-d; return `${f}<br><span class="cont cont-ret">${r} día${r===1?'':'s'} de retraso</span>`;
+  if(d>0)  return `${f}<br><span class="cont cont-rest" style="font-weight:800">${d} día${d===1?'':'s'} restante${d===1?'':'s'}</span>`;
+  if(d===0) return `${f}<br><span class="cont cont-hoy" style="font-weight:800">Vence hoy</span>`;
+  const r=-d; return `${f}<br><span class="cont cont-ret" style="font-weight:800">${r} día${r===1?'':'s'} de retraso</span>`;
 }
 function montoAR(n){ return (n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fraseEstado(e){
@@ -775,6 +797,47 @@ function fraseEstado(e){
   return m[e]||"Su orden está siendo preparada.";
 }
 
+/* ====== VENDEDORES (cantidad de ventas por vendedor) ====== */
+function viewRanking(){
+  const meses=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const now=new Date(), cy=now.getFullYear(), cm=now.getMonth();
+  const acc={};
+  VENTAS.forEach(v=>{
+    if(v.cancelada) return;
+    const vend=(v.vendedor||"").trim(); if(!vend) return;
+    const f=(v.fecha||""); const y=+f.slice(0,4), m=+f.slice(5,7)-1;
+    if(y!==cy) return;
+    acc[vend]=acc[vend]||{nombre:vend,mes:0,anio:0};
+    acc[vend].anio++;
+    if(m===cm) acc[vend].mes++;
+  });
+  let lista=Object.values(acc).filter(x=>x.anio>0);
+  lista.sort((a,b)=> (b.mes-a.mes) || (b.anio-a.anio) || a.nombre.localeCompare(b.nombre,'es'));
+  const medallas=["🥇","🥈","🥉"];
+  const filas = lista.map((x,i)=>`
+      <tr class="${i===0?'lb-row-1':(i===1?'lb-row-2':'')}">
+        <td style="font-weight:800;white-space:nowrap">${i<3?medallas[i]+' ':''}${i+1}°</td>
+        <td>${x.nombre}</td>
+        <td style="font-weight:800;font-size:15px">${x.mes}</td>
+        <td style="color:var(--muted)">${x.anio}</td>
+      </tr>`).join("");
+  $("#main").innerHTML=`
+    <h1 class="page">🤝 Equipo de ventas</h1>
+    <div class="hint">💡 Cantidad de ventas de cada vendedor. Se mide por el <b>mes en curso</b> (${meses[cm]} ${cy}); el acumulado anual va como referencia.</div>
+    ${lista.length?`
+      <div class="card">
+        <div class="toolbar"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:16px">Ventas por vendedor</b><span class="legend">${meses[cm]} ${cy} · ordenado por ventas del mes</span></div></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Puesto</th><th>Vendedor</th><th>Ventas del mes</th><th>Acumulado ${cy}</th></tr></thead>
+            <tbody>${filas}</tbody>
+          </table>
+        </div>
+      </div>`
+    :`<div class="card"><div class="empty">Todavía no hay ventas registradas en ${cy}.</div></div>`}
+  `;
+}
+
 function viewVentas(){
   if(!ventasInit){ ventasDesde=isoMenosDias(30); ventasHasta=hoyISO(); ventasInit=true; }
   const vendedores=[...new Set(VENTAS.map(v=>v.vendedor))].filter(Boolean).sort((a,b)=>(""+a).localeCompare(b,'es'));
@@ -787,7 +850,7 @@ function viewVentas(){
         <div class="field" style="flex:0 0 160px"><label>Desde</label><input type="date" id="fDesde" value="${ventasDesde}" onchange="ventasDesde=this.value;renderTablaVentas()"></div>
         <div class="field" style="flex:0 0 160px"><label>Hasta</label><input type="date" id="fHasta" value="${ventasHasta}" onchange="ventasHasta=this.value;renderTablaVentas()"></div>
         <button class="btn btn-green" onclick="renderTablaVentas()">🔍 Buscar</button>
-        <button class="btn btn-ghost" onclick="toggleMasFiltros()">Ver más filtros ${ventasFiltrosOpen?'▲':'▾'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="toggleMasFiltros()">Ver más filtros ${ventasFiltrosOpen?'▲':'▾'}</button>
         <div style="flex:1;min-width:10px"></div>
         <input class="search" placeholder="🔍 N° venta, cliente, teléfono, email, nota…" value="${ventasQuery.replace(/"/g,'&quot;')}" oninput="ventasQuery=this.value;renderTablaVentas()">
       </div>
@@ -833,10 +896,15 @@ function viewVentas(){
             registros</span>
           <span class="legend" id="ventasInfo"></span>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${puede('exportar')?`<button class="btn btn-ghost" onclick="exportarExcel(false)" title="Exportar a Excel todas las ventas del rango y filtros actuales">📊 Excel (filtradas)</button>`:''}
-          ${puede('exportar')?`<button class="btn btn-green" id="btnExpSel" onclick="exportarExcel(true)" title="Exportar solo las ventas tildadas">✅ Exportar selección (<span id="selCount">0</span>)</button>`:''}
-          ${puede('cambiar_estado')?`<button class="btn btn-ghost" onclick="abrirGestionEstados()">⚙️ Estados</button>`:''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          ${(puede('exportar')||puede('cambiar_estado'))?`<div class="vmenu-wrap">
+            <button class="btn btn-ghost btn-sm" id="ventasMasBtn" aria-haspopup="true" aria-expanded="false" title="Más acciones" onclick="toggleVentasMenu(event)">⋯ Ver más</button>
+            <div class="vmenu" id="ventasMasMenu" role="menu">
+              ${puede('exportar')?`<button role="menuitem" onclick="cerrarVentasMenu();exportarExcel(false)" title="Exportar a Excel todas las ventas del rango y filtros actuales">📊 Excel (filtradas)</button>`:''}
+              ${puede('exportar')?`<button role="menuitem" id="btnExpSel" onclick="cerrarVentasMenu();exportarSeleccionExcel()" title="Exportar solo las ventas tildadas">✅ Exportar selección (<span id="selCount">0</span>)</button>`:''}
+              ${puede('cambiar_estado')?`<button role="menuitem" onclick="cerrarVentasMenu();abrirGestionEstados()">⚙️ Estados</button>`:''}
+            </div>
+          </div>`:''}
           ${puede('ver_vender')?`<button class="btn btn-blue" onclick="nav('vender')">＋ Nueva Venta</button>`:''}
         </div>
       </div>
@@ -856,6 +924,11 @@ function viewVentas(){
 }
 
 function toggleMasFiltros(){ ventasFiltrosOpen=!ventasFiltrosOpen; viewVentas(); }
+/* ---- Menú "Ver más" (acciones secundarias de Ventas) ---- */
+function toggleVentasMenu(ev){ if(ev){ ev.stopPropagation(); } const m=$("#ventasMasMenu"), b=$("#ventasMasBtn"); if(!m) return; const show=!m.classList.contains("show"); m.classList.toggle("show",show); if(b) b.setAttribute("aria-expanded",show?"true":"false"); }
+function cerrarVentasMenu(){ const m=$("#ventasMasMenu"); if(m) m.classList.remove("show"); const b=$("#ventasMasBtn"); if(b) b.setAttribute("aria-expanded","false"); }
+document.addEventListener("click",function(e){ const m=$("#ventasMasMenu"); if(!m||!m.classList.contains("show")) return; const w=m.closest(".vmenu-wrap"); if(w && !w.contains(e.target)) cerrarVentasMenu(); });
+document.addEventListener("keydown",function(e){ if(e.key==="Escape") cerrarVentasMenu(); });
 function limpiarFiltros(){ ventasQuery=""; ventasEstado=""; ventasVendedor=""; ventasProvincia=""; setRango('30'); }
 function setRango(tipo){
   const now=new Date(), y=now.getFullYear(), m=now.getMonth();
@@ -929,6 +1002,60 @@ function exportarExcel(soloSeleccion){
   }
 }
 
+/* ---- Exportar SELECCIÓN a Excel con diseño (ExcelJS, columnas resumidas) ---- */
+function cargarExcelJS(){
+  return new Promise((resolve,reject)=>{
+    if(window.ExcelJS) return resolve();
+    const sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+    sc.onload=()=>resolve(); sc.onerror=()=>reject(new Error('No se pudo cargar ExcelJS'));
+    document.head.appendChild(sc);
+  });
+}
+async function exportarSeleccionExcel(){
+  if(!puede('exportar')){ toast("No tenés permiso para exportar"); return; }
+  const rows=ventasFiltradas().filter(v=>ventasSel.has(v.nro));
+  if(!rows.length){ toast("⚠️ No tildaste ninguna venta. Marcá las casillas y volvé a intentar."); return; }
+  toast("Generando Excel…");
+  try{ await cargarExcelJS(); }catch(e){ toast("⚠️ Necesitás conexión a internet para el Excel con diseño."); return; }
+  try{
+    const VERDE="FF3F6F5E",VERDE2="FF345C4E",GRISH="FFEAF3EF",ROJO="FFDC2626",VERDEOK="FF16A34A",LINEA="FFE5E7EB";
+    const thin={style:'thin',color:{argb:LINEA}}, bAll={top:thin,left:thin,bottom:thin,right:thin};
+    const wb=new ExcelJS.Workbook(); wb.creator="Aura Minipiscinas";
+    const ws=wb.addWorksheet("Ventas seleccionadas",{views:[{state:'frozen',ySplit:2}]});
+    ws.mergeCells('A1:G1');
+    const tt=ws.getCell('A1'); tt.value="Aura Minipiscinas · Ventas seleccionadas";
+    tt.font={bold:true,size:14,color:{argb:'FFFFFFFF'}}; tt.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE2}};
+    tt.alignment={vertical:'middle',horizontal:'left',indent:1}; ws.getRow(1).height=26;
+    const headers=["Cliente","Provincia","Localidad","Teléfono","Producto","Precio","Saldo pendiente"];
+    const hr=ws.getRow(2);
+    for(let i=0;i<headers.length;i++){ const cc=hr.getCell(i+1); cc.value=headers[i]; cc.font={bold:true,color:{argb:'FFFFFFFF'},size:11}; cc.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE}}; cc.alignment={vertical:'middle',horizontal:'center'}; cc.border=bAll; }
+    hr.height=20;
+    const ancho=[26,16,18,18,36,18,18]; for(let i=0;i<ancho.length;i++) ws.getColumn(i+1).width=ancho[i];
+    rows.forEach((v,idx)=>{
+      const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
+      const items=v.items||[];
+      const prod=items.length?items.map(i=>i.nombre).join("\n"):"—";
+      const precio=items.length?items.map(i=>"$ "+(i.precio||0).toLocaleString("es-AR")).join("\n"):"";
+      const saldo=Number(v.saldo||0);
+      const r=ws.addRow([ v.cliente||"", v.provincia||c.provincia||"", c.localidad||v.localidad||"", c.tel||"", prod, precio, saldo ]);
+      const zebra=idx%2===1;
+      for(let col=1;col<=7;col++){
+        const cell=r.getCell(col);
+        cell.border=bAll; cell.alignment={vertical:'middle',wrapText:true};
+        if(zebra) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:GRISH}};
+        if(col===6) cell.alignment={vertical:'middle',horizontal:'right',wrapText:true};
+        if(col===7){ cell.numFmt='"$ "#,##0'; cell.alignment={vertical:'middle',horizontal:'right'}; cell.font={bold:true,color:{argb: saldo>0?ROJO:VERDEOK}}; }
+      }
+    });
+    const buf=await wb.xlsx.writeBuffer();
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="Ventas_seleccion_Aura.xlsx"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+    toast(`✅ ${rows.length} venta(s) exportadas con diseño`);
+  }catch(ex){ toast("⚠️ Error generando el Excel: "+(ex.message||ex)); }
+}
+
 function renderTablaVentas(){
   const tb=$("#tVentas"); if(!tb) return;
   const allRows=ventasFiltradas();
@@ -956,9 +1083,7 @@ function renderTablaVentas(){
       ${(!canc && puede('cambiar_estado'))?`<button class="btn btn-ghost btn-sm" title="Cambiar estado" onclick="abrirCambiarEstado(${v.nro})">🔄</button>`:''}
       ${(!canc && puede('cancelar_venta'))?`<button class="btn btn-ghost btn-sm" title="Cancelar venta" onclick="abrirCancelarVenta(${v.nro})">✖️</button>`:''}
       <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button>
-      <button class="btn btn-ghost btn-sm" title="Ver remito" onclick="abrirRemito(${v.nro})">📄</button>
       <button class="btn btn-ghost btn-sm" title="Reenviar comprobante / correo al cliente" onclick="abrirReenviar(${v.nro})">📤</button>
-      <button class="btn btn-ghost btn-sm" title="Descargar remito en PDF" onclick="descargarRemitoPDF(${v.nro})">⬇️</button>
     </td></tr>`;}).join(""):`<tr><td colspan="11" class="empty">Sin resultados en este rango o con estos filtros.</td></tr>`;
   updateSelCount();
   const ca=$("#chkAll"); if(ca){ ca.checked = rows.length>0 && rows.every(v=>ventasSel.has(v.nro)); }
@@ -1021,7 +1146,7 @@ function abrirOrden(nro){
     .brand{font-weight:800;color:#3f6f5e;letter-spacing:.5px}
     @media print{.toolbar{display:none} body{margin:0}}
   </style></head><body>
-    <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button></div>
+    <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button><button class="btn" style="background:#6b7280" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button></div>
     <div class="brand">AURA MINIPISCINAS</div>
     <h1>Orden de Venta #${v.nro}</h1>
     <div class="sub">Fecha de venta: ${fmtFechaCorta(v.fecha)} &nbsp;·&nbsp; Vendedor: ${v.vendedor} &nbsp;·&nbsp; Estado: <b>${v.estado}</b></div>
@@ -1535,7 +1660,7 @@ function viewClientes(){
           <select style="max-width:190px" onchange="cliProv=this.value;renderCliTabla()"><option value="">Todas las provincias</option>${provincias.map(p=>`<option ${cliProv===p?'selected':''}>${p}</option>`).join("")}</select>
           <select style="max-width:160px" onchange="cliEstado=this.value;renderCliTabla()"><option value="" ${cliEstado===''?'selected':''}>Todos</option><option value="activo" ${cliEstado==='activo'?'selected':''}>Solo activos</option><option value="inactivo" ${cliEstado==='inactivo'?'selected':''}>Solo inactivos</option></select>
         </div>
-        ${gestor?`<button class="btn btn-blue" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button>`:''}
+        ${gestor?`<button class="btn btn-blue btn-sm" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button>`:''}
       </div>
       <div class="table-wrap">
       <table>
@@ -1593,8 +1718,8 @@ function viewProductos(){
           </select>
         </div>
         <div style="display:flex;gap:8px">
-          ${gestor?`<button class="btn btn-ghost" onclick="abrirGestionCategorias()">⚙️ Categorías</button>`:''}
-          ${gestor?`<button class="btn btn-blue" onclick="abrirModalProducto()">＋ Nuevo Producto</button>`:''}
+          ${gestor?`<button class="btn btn-ghost btn-sm" onclick="abrirGestionCategorias()">⚙️ Categorías</button>`:''}
+          ${gestor?`<button class="btn btn-blue btn-sm" onclick="abrirModalProducto()">＋ Nuevo Producto</button>`:''}
         </div>
       </div>
       <div class="table-wrap">
@@ -1741,8 +1866,8 @@ function viewUsuarios(){
           <select style="max-width:180px" onchange="usrRol=this.value;renderUsrTabla()"><option value="">Todos los roles</option>${ROLES.map(r=>`<option ${usrRol===r?'selected':''}>${r}</option>`).join("")}</select>
         </div>
         <div style="display:flex;gap:8px">
-          ${gestor?`<button class="btn btn-ghost" onclick="abrirPermisos()">⚙️ Permisos por rol</button>`:''}
-          ${gestor?`<button class="btn btn-blue" onclick="abrirModalUsuario()">＋ Nuevo Usuario</button>`:`<span class="legend">No tenés permiso para gestionar usuarios</span>`}
+          ${gestor?`<button class="btn btn-ghost btn-sm" onclick="abrirPermisos()">⚙️ Permisos por rol</button>`:''}
+          ${gestor?`<button class="btn btn-blue btn-sm" onclick="abrirModalUsuario()">＋ Nuevo Usuario</button>`:`<span class="legend">No tenés permiso para gestionar usuarios</span>`}
         </div>
       </div>
       <div class="table-wrap">
@@ -1985,7 +2110,7 @@ function viewReportes(){
     <div id="repBody"></div>`;
   renderRepBody();
 }
-function repTabBtn(id,txt){ return `<button class="btn ${repTab===id?'btn-green':'btn-ghost'}" onclick="repTab='${id}';viewReportes()">${txt}</button>`; }
+function repTabBtn(id,txt){ return `<button class="btn btn-sm ${repTab===id?'btn-green':'btn-ghost'}" onclick="repTab='${id}';viewReportes()">${txt}</button>`; }
 function renderRepBody(){
   const b=$("#repBody"); if(!b) return;
   if(repTab==="productos") b.innerHTML=htmlRepProductos();
