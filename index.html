@@ -130,6 +130,8 @@
   .kpi .t{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
   .bar{height:14px;border-radius:7px;background:var(--verde)}
   .legend{font-size:13px;color:var(--muted)}
+  .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .chkcell{width:34px;text-align:center}
   @media(max-width:820px){
     .side{position:fixed;left:-240px;top:56px;bottom:0;z-index:50;transition:left .2s;box-shadow:2px 0 12px #0002}
     .side.open{left:0}
@@ -137,6 +139,21 @@
     .kpis{grid-template-columns:repeat(2,1fr)}
     .main{padding:16px}
     h1.page{font-size:24px}
+  }
+  @media(max-width:600px){
+    body{font-size:14px}
+    .main{padding:12px;max-width:100%}
+    h1.page{font-size:21px}
+    .card{padding:14px;border-radius:12px}
+    .row{gap:10px}
+    .field{min-width:120px}
+    .toolbar{gap:8px}
+    .search{max-width:100%}
+    /* Las tablas anchas se deslizan en horizontal para verse bien en el celu */
+    .card > table, .table-wrap > table{display:block;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+    .kpis{grid-template-columns:1fr 1fr;gap:10px}
+    .modal{max-width:100%;border-radius:14px}
+    .btn{padding:10px 14px}
   }
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;padding:13px 20px;border-radius:10px;box-shadow:0 6px 20px #0004;z-index:120;opacity:0;transition:opacity .25s;font-weight:600}
   .toast.show{opacity:1}
@@ -246,25 +263,58 @@ const $ = s => document.querySelector(s);
 const money = n => "$ " + (n||0).toLocaleString("es-AR");
 let carrito = [];          // items de la venta en curso
 let vProdSel = null;       // producto elegido en el buscador de Vender
+let ventaFactura = false;  // ¿Necesita factura? (suma IVA 21%)
 let clienteActual = null;  // cliente cargado para la venta en curso
 let modalModo = "venta";   // "venta" | "clientes"
 let clienteEditId = null;  // id del cliente que se edita desde la lista de Clientes
 
 /* ====== USUARIO ACTIVO + ROLES + PERMISOS ====== */
-const ROLES = ["Vendedor","Administrador","Maestro"];
+const ROLES = ["Vendedor","Administrador","Producción","Maestro"];
+const ROLES_CONFIG = ["Administrador","Vendedor","Producción"]; // roles con permisos configurables (Maestro = todo)
 const USUARIOS_DEMO = {
   "Vendedor":      {nombre:"Carolina", ap:"Fabro",  rol:"Vendedor"},
   "Administrador": {nombre:"Mariano",  ap:"Gómez",  rol:"Administrador"},
+  "Producción":    {nombre:"Pablo",    ap:"Taller", rol:"Producción"},
   "Maestro":       {nombre:"Aura",     ap:"Maestra", rol:"Maestro"},
 };
 let USUARIO_ACTUAL = {...USUARIOS_DEMO["Maestro"]};
+
+/* ---- Catálogo de permisos (clave + texto explicativo) ---- */
+const PERMISOS_LISTA = [
+  {k:"ver_vender",         t:"Acceder a Vender (cargar ventas)"},
+  {k:"ver_ventas",         t:"Acceder a Gestión de Ventas"},
+  {k:"ver_clientes",       t:"Acceder a Clientes"},
+  {k:"ver_productos",      t:"Acceder a Productos"},
+  {k:"ver_usuarios",       t:"Acceder a Usuarios"},
+  {k:"ver_reportes",       t:"Acceder a Reportes"},
+  {k:"ver_auditoria",      t:"Acceder a Auditoría / Historial"},
+  {k:"editar_venta",       t:"Editar ventas (productos, notas, pagos, IVA)"},
+  {k:"cancelar_venta",     t:"Cancelar ventas"},
+  {k:"cambiar_estado",     t:"Cambiar el estado de las ventas"},
+  {k:"gestionar_productos",t:"Crear / editar productos y categorías"},
+  {k:"editar_precio",      t:"Editar precios de productos"},
+  {k:"gestionar_clientes", t:"Crear / editar clientes"},
+  {k:"gestionar_usuarios", t:"Crear / editar usuarios y permisos"},
+  {k:"exportar",           t:"Exportar a Excel"},
+];
+/* Valores por defecto (se sobreescriben con lo guardado en la base) */
+const PERMISOS_DEFAULT = {
+  "Administrador":{ver_vender:1,ver_ventas:1,ver_clientes:1,ver_productos:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
+  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_clientes:0,ver_productos:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
+  "Producción":   {ver_vender:0,ver_ventas:1,ver_clientes:0,ver_productos:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
+};
+let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
+let permisosDraft = null; // copia de trabajo al editar el panel
+const IVA_PCT = 0.21;
 function nombreUsuario(){ return `${USUARIO_ACTUAL.nombre} ${USUARIO_ACTUAL.ap}`; }
 function esVendedor(){ return USUARIO_ACTUAL.rol==="Vendedor"; }
 function esAdmin(){ return USUARIO_ACTUAL.rol==="Administrador"; }
 function esMaestro(){ return USUARIO_ACTUAL.rol==="Maestro"; }
-function puedeGestionar(){ return esAdmin() || esMaestro(); } // casi todo: productos, precios, estados, categorías, clientes
-function puedeUsuarios(){ return esMaestro(); }                // gestionar usuarios/roles y eliminar
-function tabsPermitidas(){ return esVendedor() ? ["vender","ventas"] : ["vender","ventas","clientes","productos","usuarios","reportes"]; }
+/* Motor de permisos: el Maestro siempre puede todo; el resto según la matriz configurable. */
+function puede(k){ if(esMaestro()) return true; const r=PERMISOS[USUARIO_ACTUAL.rol]; return !!(r && r[k]); }
+function puedeUsuarios(){ return puede("gestionar_usuarios"); }  // compat: gestionar usuarios/roles
+const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
+function tabsPermitidas(){ return Object.keys(TAB_PERM).filter(t=>puede(TAB_PERM[t])); }
 
 const TABS = [
   {id:"vender",   ic:"🛒", txt:"Vender"},
@@ -272,6 +322,7 @@ const TABS = [
   {id:"clientes", ic:"👥", txt:"Clientes"},
   {id:"productos",ic:"🏷️", txt:"Productos"},
   {id:"usuarios", ic:"🔐", txt:"Usuarios"},
+  {id:"auditoria",ic:"📜", txt:"Auditoría"},
   {id:"reportes", ic:"📊", txt:"Reportes"},
 ];
 let vistaActual = "vender";
@@ -313,10 +364,24 @@ let ESTADOS = [
 let estadoDraft = []; // copia de trabajo al editar el catálogo
 
 /* Estado de orden y filtros del listado de Ventas */
-let ventasQuery = "", ventasEstado = "", ventasVendedor = "";
+let ventasQuery = "", ventasEstado = "", ventasVendedor = "", ventasProvincia = "";
 let ventasDesde = "", ventasHasta = "", ventasFiltrosOpen = false, ventasInit = false;
 let ventasSort = {key:"nro", dir:"desc"};
 let ventasLimite = "10";
+let ventasSel = new Set(); // ventas tildadas para exportar selección
+
+/* Filtros/buscadores del resto de secciones */
+let cliQuery = "", cliProv = "", cliEstado = "";
+let prodQuery = "", prodEstado = "";
+let usrQuery = "", usrRol = "";
+let audQuery = "", audAccion = "", audDesde = "", audHasta = "";
+
+/* ====== AUDITORÍA (registro de actividad) ====== */
+let AUDITORIA = []; // se carga desde la base; en demo queda en memoria
+/* Registra una acción en el historial. conexion.js la sobreescribe para persistir en la base. */
+function auditar(accion, entidad, entidadId, detalle){
+  AUDITORIA.unshift({usuario:nombreUsuario(), rol:USUARIO_ACTUAL.rol, accion, entidad:entidad||"", entidad_id:entidadId!=null?String(entidadId):"", detalle:detalle||"", creado:new Date().toISOString()});
+}
 
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600);}
 function toggleMenu(){$("#side").classList.toggle("open");}
@@ -349,13 +414,14 @@ function nav(v){
   vistaActual = v;
   renderSidebar();
   $("#side").classList.remove("open");
-  ({vender:viewVender,ventas:viewVentas,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,reportes:viewReportes}[v])();
+  ({vender:viewVender,ventas:viewVentas,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
 }
 
 /* ====== VENDER (simplificado) ====== */
 function viewVender(){
   carrito = [];
   clienteActual = null;
+  ventaFactura = false;
   $("#main").innerHTML = `
     <h1 class="page">Nueva Venta</h1>
     <div class="hint">💡 Versión simplificada para el vendedor: cargá el cliente, sumá productos y listo. El vendedor y la fecha se completan solos.</div>
@@ -376,7 +442,16 @@ function viewVender(){
         </div>
 
         <div class="card">
-          <h3 style="margin-bottom:12px">Productos</h3>
+          <div class="toolbar" style="margin-bottom:8px">
+            <h3>Productos</h3>
+            <div class="field" style="flex:0 0 auto;min-width:0">
+              <label>¿Necesita factura? <span class="req">*</span></label>
+              <select id="vFactura" style="width:auto;min-width:120px" onchange="setVentaFactura(this.value==='si')">
+                <option value="no" selected>No</option>
+                <option value="si">Sí — sumar IVA 21%</option>
+              </select>
+            </div>
+          </div>
           <div class="row">
             <div class="field" style="flex:3;position:relative">
               <label>Producto</label>
@@ -389,10 +464,12 @@ function viewVender(){
             </div>
             <button class="btn btn-green" onclick="addItem()">＋ Agregar</button>
           </div>
+          <div class="table-wrap">
           <table style="margin-top:14px">
-            <thead><tr><th>Cant.</th><th>Producto</th><th>Precio</th><th>Subtotal</th><th></th></tr></thead>
+            <thead id="vItemsHead"></thead>
             <tbody id="vItems"><tr><td colspan="5" class="empty">Todavía no agregaste productos.</td></tr></tbody>
           </table>
+          </div>
         </div>
 
         <div class="card">
@@ -427,7 +504,9 @@ function viewVender(){
 
       <div class="suma">
         <h3>Resumen</h3>
-        <div class="l">Total <b id="sTotal" class="red">$ 0</b></div>
+        <div class="l"><span id="sTotalLbl">Total</span> <b id="sTotal" class="red">$ 0</b></div>
+        <div class="l" id="sIvaRow" style="display:none">IVA (21%) <b id="sIva">$ 0</b></div>
+        <div class="l" id="sGranRow" style="display:none">Total c/IVA <b id="sGran" class="red">$ 0</b></div>
         <div class="l">Cobrado <b id="sCobrado" class="green">$ 0</b></div>
         <div class="l">Saldo <b id="sSaldo" class="red">$ 0</b></div>
         <button class="btn btn-green" style="width:100%;margin-top:16px;justify-content:center;font-size:17px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
@@ -592,29 +671,70 @@ function addItem(){
   renderItems();
 }
 function delItem(id){carrito=carrito.filter(i=>i.id!==id);renderItems();}
+function setVentaFactura(b){ ventaFactura=!!b; renderItems(); }
 function renderItems(){
-  const tb=$("#vItems");
-  if(!carrito.length){tb.innerHTML=`<tr><td colspan="5" class="empty">Todavía no agregaste productos.</td></tr>`;recalc();return;}
-  tb.innerHTML=carrito.map(i=>`<tr><td>${i.cant}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(i.precio*i.cant)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`).join("");
+  const head=$("#vItemsHead"), tb=$("#vItems"); if(!tb) return;
+  if(head){ head.innerHTML = ventaFactura
+    ? `<tr><th>Cant.</th><th>Producto</th><th>Precio</th><th>IVA 21%</th><th>Subtotal</th><th></th></tr>`
+    : `<tr><th>Cant.</th><th>Producto</th><th>Precio</th><th>Subtotal</th><th></th></tr>`; }
+  const colspan = ventaFactura?6:5;
+  if(!carrito.length){tb.innerHTML=`<tr><td colspan="${colspan}" class="empty">Todavía no agregaste productos.</td></tr>`;recalc();return;}
+  tb.innerHTML=carrito.map(i=>{
+    const base=i.precio*i.cant, iva=ventaFactura?base*IVA_PCT:0;
+    return ventaFactura
+      ? `<tr><td>${i.cant}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`
+      : `<tr><td>${i.cant}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`;
+  }).join("");
   recalc();
 }
 function recalc(){
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
-  const cobrado=Math.min(total,+($("#vCobro")?.value||0));
-  if($("#sTotal")){$("#sTotal").textContent=money(total);$("#sCobrado").textContent=money(cobrado);$("#sSaldo").textContent=money(total-cobrado);}
+  const iva=ventaFactura?total*IVA_PCT:0;
+  const gran=total+iva;
+  const cobrado=Math.min(gran,+($("#vCobro")?.value||0));
+  if($("#sTotal")){
+    $("#sTotalLbl").textContent = ventaFactura?"Subtotal":"Total";
+    $("#sTotal").textContent=money(total);
+    $("#sIvaRow").style.display = ventaFactura?"flex":"none";
+    $("#sGranRow").style.display = ventaFactura?"flex":"none";
+    if(ventaFactura){ $("#sIva").textContent=money(iva); $("#sGran").textContent=money(gran); }
+    $("#sCobrado").textContent=money(cobrado);
+    $("#sSaldo").textContent=money(gran-cobrado);
+  }
 }
 function confirmarVenta(){
   if(!clienteActual){toast("⚠️ Cargá el cliente primero");return;}
   if(!carrito.length){toast("⚠️ Agregá al menos un producto");return;}
   const c=clienteActual;
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
-  const cobrado=Math.min(total,+$("#vCobro").value||0);
-  const nro=Math.max(...VENTAS.map(v=>v.nro))+1;
-  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,total,saldo:total-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:new Date().toISOString().slice(0,10),entrega:($("#vEntrega")?.value||""),clienteId:c.id,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant})),nota:($("#vNota")?.value||"").trim()});
+  const iva=ventaFactura?total*IVA_PCT:0;
+  const gran=total+iva;
+  const cobrado=Math.min(gran,+$("#vCobro").value||0);
+  const metodo=($("#vPago")?.value||"Efectivo");
+  const nro=Math.max(0,...VENTAS.map(v=>v.nro))+1;
+  const pagos=cobrado>0?[{monto:cobrado,metodo,fecha:hoyISO(),usuario:nombreUsuario()}]:[];
+  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:hoyISO(),entrega:($("#vEntrega")?.value||""),clienteId:c.id,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant})),pagos,nota:($("#vNota")?.value||"").trim()});
+  descontarStockVenta(carrito);
+  auditar("Venta creada","venta",nro,`Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`);
   const remito=$("#vRemito").checked;
   toast(`✅ Venta #${nro} cargada`+(remito?` · remito enviado a ${c.mail}`:""));
   nav("ventas");
 }
+/* Descuento de stock automático para los productos marcados (stock numérico). */
+function descontarStockVenta(items){
+  (items||[]).forEach(it=>{
+    const p = PRODUCTOS.find(x=>x.id===it.id) || PRODUCTOS.find(x=>(x.nombre+(x.desc?" · "+x.desc:""))===it.nombre);
+    if(p && p.descStock && !isNaN(+p.stock)){ p.stock = String(Math.max(0, (+p.stock) - (it.cant||0))); if(window.persistirStock) window.persistirStock(p); }
+  });
+}
+function restaurarStockVenta(items){
+  (items||[]).forEach(it=>{
+    const p = PRODUCTOS.find(x=>x.id===it.id) || PRODUCTOS.find(x=>(x.nombre+(x.desc?" · "+x.desc:""))===it.nombre);
+    if(p && p.descStock && !isNaN(+p.stock)){ p.stock = String((+p.stock) + (it.cant||0)); if(window.persistirStock) window.persistirStock(p); }
+  });
+}
+/* Total con IVA de una venta (compat con ventas viejas sin iva). */
+function granTotal(v){ return Number(v.total||0) + Number(v.iva||0); }
 
 /* ====== VENTAS ====== */
 function estColor(nombre){const e=ESTADOS.find(x=>x.nombre===nombre);return COLORES[e?e.color:"gris"]||COLORES.gris;}
@@ -657,7 +777,8 @@ function fraseEstado(e){
 
 function viewVentas(){
   if(!ventasInit){ ventasDesde=isoMenosDias(30); ventasHasta=hoyISO(); ventasInit=true; }
-  const vendedores=[...new Set(VENTAS.map(v=>v.vendedor))].sort((a,b)=>a.localeCompare(b,'es'));
+  const vendedores=[...new Set(VENTAS.map(v=>v.vendedor))].filter(Boolean).sort((a,b)=>(""+a).localeCompare(b,'es'));
+  const provincias=[...new Set(VENTAS.map(v=>v.provincia).filter(Boolean))].sort((a,b)=>(""+a).localeCompare(b,'es'));
   $("#main").innerHTML=`
     <h1 class="page">Gestión de Ventas</h1>
 
@@ -668,7 +789,7 @@ function viewVentas(){
         <button class="btn btn-green" onclick="renderTablaVentas()">🔍 Buscar</button>
         <button class="btn btn-ghost" onclick="toggleMasFiltros()">Ver más filtros ${ventasFiltrosOpen?'▲':'▾'}</button>
         <div style="flex:1;min-width:10px"></div>
-        <input class="search" placeholder="🔍 Cliente, localidad…" value="${ventasQuery.replace(/"/g,'&quot;')}" oninput="ventasQuery=this.value;renderTablaVentas()">
+        <input class="search" placeholder="🔍 N° venta, cliente, teléfono, email, nota…" value="${ventasQuery.replace(/"/g,'&quot;')}" oninput="ventasQuery=this.value;renderTablaVentas()">
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="chip" onclick="setRango('30')">Últimos 30 días</button>
@@ -678,6 +799,12 @@ function viewVentas(){
       </div>
       <div id="masFiltros" style="display:${ventasFiltrosOpen?'block':'none'};margin-top:16px;border-top:1px solid var(--linea);padding-top:16px">
         <div class="row">
+          <div class="field"><label>Provincia</label>
+            <select id="fProvincia" onchange="ventasProvincia=this.value;renderTablaVentas()">
+              <option value="">Todas las provincias</option>
+              ${provincias.map(p=>`<option ${ventasProvincia===p?'selected':''}>${p}</option>`).join("")}
+            </select>
+          </div>
           <div class="field"><label>Estado</label>
             <select id="fEstado" onchange="ventasEstado=this.value;renderTablaVentas()">
               <option value="">Todos los estados</option>
@@ -692,6 +819,7 @@ function viewVentas(){
           </div>
           <button class="btn btn-ghost" onclick="limpiarFiltros()">↺ Limpiar filtros</button>
         </div>
+        <div class="legend" style="margin-top:8px">Podés combinar varios filtros a la vez (provincia + fecha + estado + vendedor) junto con el buscador.</div>
       </div>
     </div>
 
@@ -705,26 +833,30 @@ function viewVentas(){
             registros</span>
           <span class="legend" id="ventasInfo"></span>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-green" onclick="exportarExcel()" title="Exportar a Excel las ventas del rango y filtros actuales">📊 Excel</button>
-          ${puedeGestionar()?`<button class="btn btn-ghost" onclick="abrirGestionEstados()">⚙️ Estados</button>`:''}
-          <button class="btn btn-blue" onclick="nav('vender')">＋ Nueva Venta</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${puede('exportar')?`<button class="btn btn-ghost" onclick="exportarExcel(false)" title="Exportar a Excel todas las ventas del rango y filtros actuales">📊 Excel (filtradas)</button>`:''}
+          ${puede('exportar')?`<button class="btn btn-green" id="btnExpSel" onclick="exportarExcel(true)" title="Exportar solo las ventas tildadas">✅ Exportar selección (<span id="selCount">0</span>)</button>`:''}
+          ${puede('cambiar_estado')?`<button class="btn btn-ghost" onclick="abrirGestionEstados()">⚙️ Estados</button>`:''}
+          ${puede('ver_vender')?`<button class="btn btn-blue" onclick="nav('vender')">＋ Nueva Venta</button>`:''}
         </div>
       </div>
+      <div class="table-wrap">
       <table class="tabla-ventas">
         <thead><tr>
+          <th class="chkcell"><input type="checkbox" id="chkAll" title="Seleccionar todo" onclick="toggleSelAll(this.checked)" style="width:auto"></th>
           ${thSort("Nro.","nro")}${thSort("Fecha","fecha")}${thSort("Entrega","entrega")}${thSort("Cliente","cliente")}${thSort("Localidad","localidad")}
           ${thSort("Total","total")}${thSort("Saldo","saldo")}${thSort("Estado","estado")}${thSort("Vendedor","vendedor")}
           <th>Acciones</th>
         </tr></thead>
         <tbody id="tVentas"></tbody>
       </table>
+      </div>
     </div>`;
   renderTablaVentas();
 }
 
 function toggleMasFiltros(){ ventasFiltrosOpen=!ventasFiltrosOpen; viewVentas(); }
-function limpiarFiltros(){ ventasQuery=""; ventasEstado=""; ventasVendedor=""; setRango('30'); }
+function limpiarFiltros(){ ventasQuery=""; ventasEstado=""; ventasVendedor=""; ventasProvincia=""; setRango('30'); }
 function setRango(tipo){
   const now=new Date(), y=now.getFullYear(), m=now.getMonth();
   if(tipo==="30"){ ventasDesde=isoMenosDias(30); ventasHasta=hoyISO(); }
@@ -740,29 +872,48 @@ function setVentasSort(key){
 }
 
 function ventasFiltradas(){
-  const q=(ventasQuery||"").toLowerCase();
+  const q=(ventasQuery||"").trim().toLowerCase();
   let rows=VENTAS.filter(v=>{
     if(ventasDesde && v.fecha<ventasDesde) return false;
     if(ventasHasta && v.fecha>ventasHasta) return false;
     if(ventasEstado && v.estado!==ventasEstado) return false;
     if(ventasVendedor && v.vendedor!==ventasVendedor) return false;
-    if(q && !(v.cliente+v.vendedor+v.localidad).toLowerCase().includes(q)) return false;
+    if(ventasProvincia && (v.provincia||"")!==ventasProvincia) return false;
+    if(q){
+      const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
+      const txt=("#"+v.nro+" "+(v.cliente||"")+" "+(v.vendedor||"")+" "+(v.localidad||"")+" "+(v.provincia||"")+" "+(v.nota||"")+" "+(c.tel||"")+" "+(c.mail||"")+" "+(c.dni||"")).toLowerCase();
+      if(!txt.includes(q.replace(/^#/,''))) return false;
+    }
     return true;
   });
   const {key,dir}=ventasSort, mul=dir==="asc"?1:-1, num=["nro","total","saldo"].includes(key);
-  return rows.slice().sort((a,b)=> num ? (a[key]-b[key])*mul : (""+a[key]).localeCompare(""+b[key],'es',{sensitivity:'base'})*mul );
+  const keyVal=(v)=> key==="total" ? granTotal(v) : v[key];
+  return rows.slice().sort((a,b)=> num ? (keyVal(a)-keyVal(b))*mul : (""+a[key]).localeCompare(""+b[key],'es',{sensitivity:'base'})*mul );
 }
+/* ---- Selección por checkbox para exportar ---- */
+function updateSelCount(){ const el=$("#selCount"); if(el) el.textContent=ventasSel.size; const b=$("#btnExpSel"); if(b) b.disabled=ventasSel.size===0; }
+function toggleSelVenta(nro,on){ if(on) ventasSel.add(nro); else ventasSel.delete(nro); updateSelCount(); }
+function toggleSelAll(on){ const vis=ventasFiltradas(); const lim=(ventasLimite==='todas')?vis.length:(parseInt(ventasLimite,10)||10); vis.slice(0,lim).forEach(v=>{ if(on) ventasSel.add(v.nro); else ventasSel.delete(v.nro); }); renderTablaVentas(); }
 
-function exportarExcel(){
-  const rows=ventasFiltradas();
+function exportarExcel(soloSeleccion){
+  if(!puede('exportar')){ toast("No tenés permiso para exportar"); return; }
+  let rows=ventasFiltradas();
+  if(soloSeleccion){
+    rows=rows.filter(v=>ventasSel.has(v.nro));
+    if(!rows.length){ toast("⚠️ No tildaste ninguna venta. Marcá las casillas y volvé a intentar."); return; }
+  }
   if(!rows.length){ toast("⚠️ No hay ventas para exportar en este rango"); return; }
-  const cols=["Nro.","Fecha","Fecha Prometida","Cliente","Localidad","Teléfono","Email","Productos","Total","Cobrado","Saldo","Estado","Vendedor"];
+  const cols=["Nro.","Fecha","Fecha Prometida","Cliente","Provincia","Localidad","Teléfono","Email","Productos","Cantidades","Precios","¿Factura?","Total sin IVA","IVA","Subtotal (c/IVA)","Cobrado","Saldo","Pagos registrados","Estado","Observaciones","Vendedor"];
   const filas=rows.map(v=>{
     const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
-    const prods=(v.items||[]).map(i=>`${i.cant}x ${i.nombre}`).join(" | ");
-    return {"Nro.":v.nro,"Fecha":fmtFechaCorta(v.fecha),"Fecha Prometida":fmtFechaCorta(v.entrega),"Cliente":v.cliente,"Localidad":v.localidad,"Teléfono":c.tel||"","Email":c.mail||"","Productos":prods,"Total":v.total,"Cobrado":v.total-v.saldo,"Saldo":v.saldo,"Estado":v.cancelada?"Cancelada":v.estado,"Vendedor":v.vendedor};
+    const items=v.items||[];
+    const prods=items.map(i=>i.nombre).join(" | ");
+    const cants=items.map(i=>i.cant).join(" | ");
+    const precios=items.map(i=>montoAR(i.precio)).join(" | ");
+    const pagos=(v.pagos||[]).map(p=>`${montoAR(p.monto)}${p.metodo?` (${p.metodo}`:''}${p.fecha?`${p.metodo?', ':' ('}${fmtFechaCorta(p.fecha)})`:(p.metodo?')':'')}`).join(" | ");
+    return {"Nro.":v.nro,"Fecha":fmtFechaCorta(v.fecha),"Fecha Prometida":fmtFechaCorta(v.entrega),"Cliente":v.cliente,"Provincia":v.provincia||"","Localidad":v.localidad,"Teléfono":c.tel||"","Email":c.mail||"","Productos":prods,"Cantidades":cants,"Precios":precios,"¿Factura?":v.factura?"Sí":"No","Total sin IVA":Number(v.total||0),"IVA":Number(v.iva||0),"Subtotal (c/IVA)":granTotal(v),"Cobrado":granTotal(v)-Number(v.saldo||0),"Saldo":Number(v.saldo||0),"Pagos registrados":pagos,"Estado":v.cancelada?"Cancelada":v.estado,"Observaciones":v.nota||"","Vendedor":v.vendedor};
   });
-  const nombre=`Ventas_${ventasDesde||'inicio'}_a_${ventasHasta||'hoy'}`;
+  const nombre=(soloSeleccion?`Ventas_seleccion_`:`Ventas_`)+`${ventasDesde||'inicio'}_a_${ventasHasta||'hoy'}`;
   if(window.XLSX){
     const ws=XLSX.utils.json_to_sheet(filas,{header:cols});
     const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Ventas");
@@ -793,21 +944,28 @@ function renderTablaVentas(){
   tb.innerHTML=rows.length?rows.map(v=>{
     const canc=v.cancelada;
     const estadoCell = canc ? `<b style="color:var(--rojo)">Cancelada</b>` : estBadge(v.estado);
+    const ivaTag = v.factura ? `<br><span class="cont cont-rest">c/IVA</span>` : "";
     return `
-    <tr class="${canc?'cancelada':''}"><td><b>#${v.nro}</b></td><td>${fmtFechaCorta(v.fecha)}</td><td>${entregaCell(v)}</td><td>${v.cliente}</td><td>${v.localidad}</td>
-    <td>${money(v.total)}</td><td><b>${money(v.saldo)}</b></td>
+    <tr class="${canc?'cancelada':''}">
+    <td class="chkcell"><input type="checkbox" style="width:auto" ${ventasSel.has(v.nro)?'checked':''} onclick="toggleSelVenta(${v.nro},this.checked)"></td>
+    <td><b>#${v.nro}</b></td><td>${fmtFechaCorta(v.fecha)}</td><td>${entregaCell(v)}</td><td>${v.cliente}</td><td>${v.localidad}</td>
+    <td>${money(granTotal(v))}${ivaTag}</td><td><b>${money(v.saldo)}</b></td>
     <td>${estadoCell}</td><td>${v.vendedor}</td>
     <td class="acts">
-      ${(!canc && puedeGestionar())?`<button class="btn btn-ghost btn-sm" title="Cambiar estado" onclick="abrirCambiarEstado(${v.nro})">🔄</button>`:''}
-      ${(!canc && puedeCancelar(v))?`<button class="btn btn-ghost btn-sm" title="Cancelar venta" onclick="abrirCancelarVenta(${v.nro})">✖️</button>`:''}
+      ${(!canc && puede('editar_venta'))?`<button class="btn btn-ghost btn-sm" title="Editar venta" onclick="abrirEditarVenta(${v.nro})">✏️</button>`:''}
+      ${(!canc && puede('cambiar_estado'))?`<button class="btn btn-ghost btn-sm" title="Cambiar estado" onclick="abrirCambiarEstado(${v.nro})">🔄</button>`:''}
+      ${(!canc && puede('cancelar_venta'))?`<button class="btn btn-ghost btn-sm" title="Cancelar venta" onclick="abrirCancelarVenta(${v.nro})">✖️</button>`:''}
       <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button>
-      <button class="btn btn-ghost btn-sm" title="Ver / enviar remito al cliente" onclick="abrirRemito(${v.nro})">✉️</button>
+      <button class="btn btn-ghost btn-sm" title="Ver remito" onclick="abrirRemito(${v.nro})">📄</button>
+      <button class="btn btn-ghost btn-sm" title="Reenviar comprobante / correo al cliente" onclick="abrirReenviar(${v.nro})">📤</button>
       <button class="btn btn-ghost btn-sm" title="Descargar remito en PDF" onclick="descargarRemitoPDF(${v.nro})">⬇️</button>
-    </td></tr>`;}).join(""):`<tr><td colspan="10" class="empty">Sin resultados en este rango o con estos filtros.</td></tr>`;
+    </td></tr>`;}).join(""):`<tr><td colspan="11" class="empty">Sin resultados en este rango o con estos filtros.</td></tr>`;
+  updateSelCount();
+  const ca=$("#chkAll"); if(ca){ ca.checked = rows.length>0 && rows.every(v=>ventasSel.has(v.nro)); }
 }
 
-/* Cancelar: solo Admin/Maestro. El vendedor solo ve ver, remito y descargar PDF. */
-function puedeCancelar(v){ return puedeGestionar(); }
+/* Cancelar: según permiso 'cancelar_venta'. */
+function puedeCancelar(v){ return puede('cancelar_venta'); }
 function abrirCancelarVenta(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   if(!puedeCancelar(v)){ toast("No tenés permiso para cancelar esta venta"); return; }
@@ -830,6 +988,8 @@ function abrirCancelarVenta(nro){
 function confirmarCancelarVenta(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   v.cancelada=true; v.estadoPrevio=v.estado; v.canceladaPor=nombreUsuario(); v.fechaCancelada=hoyISO();
+  restaurarStockVenta(v.items);
+  auditar("Venta cancelada","venta",nro,`Cliente ${v.cliente} · Total ${money(granTotal(v))}`);
   cerrarModal(); renderTablaVentas(); toast(`✖️ Venta #${nro} cancelada (queda registrada)`);
 }
 
@@ -841,7 +1001,7 @@ function abrirOrden(nro){
   const filasProd = items.length
     ? items.map(i=>`<tr><td>${i.cant}</td><td>${i.nombre}</td><td class="r">${money(i.precio)}</td><td class="r">${money(i.precio*i.cant)}</td></tr>`).join("")
     : `<tr><td colspan="4" style="text-align:center;color:#888">Sin ítems cargados en esta venta</td></tr>`;
-  const cobrado=v.total-v.saldo;
+  const cobrado=granTotal(v)-v.saldo;
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Orden de Venta #${v.nro}</title>
   <style>
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#1f2937;max-width:780px;margin:24px auto;padding:0 20px}
@@ -890,8 +1050,12 @@ function abrirOrden(nro){
     ${v.nota?`<div class="box"><h3>Notas / Observaciones</h3><div style="font-size:14px;white-space:pre-wrap">${(v.nota||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div></div>`:''}
 
     <div class="box"><h3>Totales</h3>
-      <div class="tot"><span>Total</span><span>${money(v.total)}</span></div>
+      ${v.factura?`<div class="tot"><span>Subtotal (sin IVA)</span><span>${money(v.total)}</span></div>
+      <div class="tot"><span>IVA (21%)</span><span>${money(v.iva||0)}</span></div>
+      <div class="tot"><span>Total con IVA</span><span>${money(granTotal(v))}</span></div>`
+      :`<div class="tot"><span>Total</span><span>${money(v.total)}</span></div>`}
       <div class="tot"><span>Cobrado</span><span>${money(cobrado)}</span></div>
+      ${(v.pagos&&v.pagos.length)?`<div style="font-size:12px;color:#6b7280;padding:2px 0 6px">Pagos: ${v.pagos.map(p=>money(p.monto)+(p.metodo?` (${p.metodo})`:'')).join(' · ')}</div>`:''}
       <div class="tot big"><span>Saldo pendiente</span><span>${money(v.saldo)}</span></div>
     </div>
   </body></html>`;
@@ -909,7 +1073,7 @@ function abrirRemito(nro){
   const filas = items.length
     ? items.map(i=>`<tr><td></td><td>${i.nombre}</td><td class="r">${(i.cant||0).toFixed(3)}</td><td class="c">Unidades</td><td class="r">${montoAR(i.precio)}</td><td class="r">0,00</td><td class="r">0,00</td><td class="r">${montoAR(i.precio*i.cant)}</td></tr>`).join("")
     : `<tr><td colspan="8" style="text-align:center;color:#888">Sin ítems</td></tr>`;
-  const recibido=v.total-v.saldo;
+  const recibido=granTotal(v)-v.saldo;
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Remito — Venta #${v.nro}</title>
   <style>
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#f4f6f8;margin:0;padding:24px 14px;color:#1f2937}
@@ -1001,8 +1165,8 @@ function abrirRemito(nro){
       <div class="piezas">Total piezas: ${piezas}</div>
       <div class="tot">
         <div class="lt"><span>Subtotal: ARS</span><span>${montoAR(v.total)}</span></div>
-        <div class="lt"><span>Importe otros tributos: ARS</span><span>0,00</span></div>
-        <div class="lt u"><span>Importe total: ARS</span><span>${montoAR(v.total)}</span></div>
+        <div class="lt"><span>${v.factura?'IVA 21%':'Importe otros tributos'}: ARS</span><span>${montoAR(v.factura?(v.iva||0):0)}</span></div>
+        <div class="lt u"><span>Importe total: ARS</span><span>${montoAR(granTotal(v))}</span></div>
         <div class="lt"><span>Total recibido: ARS</span><span>${montoAR(recibido)}</span></div>
         <div class="lt u"><span>Saldo adeudado: ARS</span><span>${montoAR(v.saldo)}</span></div>
       </div>
@@ -1079,10 +1243,10 @@ function descargarRemitoPDF(nro){
     y+=16;
   };
   linea("Subtotal: ARS", montoAR(v.total));
-  linea("Importe otros tributos: ARS", "0,00");
-  linea("Importe total: ARS", montoAR(v.total), true);
+  linea((v.factura?"IVA 21%: ARS":"Importe otros tributos: ARS"), montoAR(v.factura?(v.iva||0):0));
+  linea("Importe total: ARS", montoAR(granTotal(v)), true);
   y+=4;
-  linea("Total recibido: ARS", montoAR(v.total-v.saldo));
+  linea("Total recibido: ARS", montoAR(granTotal(v)-v.saldo));
   linea("Saldo adeudado: ARS", montoAR(v.saldo), true);
 
   y+=10; doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(90);
@@ -1098,7 +1262,7 @@ function descargarRemitoPDF(nro){
 
 /* Cambiar el estado de una venta (solo maestro) */
 function abrirCambiarEstado(nro){
-  if(!puedeGestionar()){ toast("No tenés permiso para cambiar el estado"); return; }
+  if(!puede('cambiar_estado')){ toast("No tenés permiso para cambiar el estado"); return; }
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
@@ -1120,13 +1284,179 @@ function abrirCambiarEstado(nro){
 }
 function guardarEstadoVenta(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const previo=v.estado;
   v.estado=$("#eEstado").value;
+  if(previo!==v.estado) auditar("Estado de venta cambiado","venta",nro,`${previo} → ${v.estado}`);
   cerrarModal(); renderTablaVentas(); toast(`✅ Venta #${nro} → ${v.estado}`);
 }
 
+/* ====== EDITAR VENTA (productos, nota, pagos, IVA) ====== */
+let editDraft = null;
+function abrirEditarVenta(nro){
+  if(!puede('editar_venta')){ toast("No tenés permiso para editar ventas"); return; }
+  const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
+  if(v.cancelada){ toast("No se puede editar una venta cancelada"); return; }
+  editDraft={
+    nro,
+    items:(v.items||[]).map(i=>({id:i.id, nombre:i.nombre, precio:+i.precio, cant:+i.cant, categoria:i.categoria})),
+    itemsOrig:(v.items||[]).map(i=>({nombre:i.nombre, cant:+i.cant})),
+    nota:v.nota||"", factura:!!v.factura,
+    cobradoPrevio: granTotal(v)-(+v.saldo||0),
+    pagosPrevios:(v.pagos||[]).slice(),
+    nuevosPagos:[]
+  };
+  const activos=PRODUCTOS.filter(p=>p.activo!==false);
+  $("#modalRoot").innerHTML=`
+   <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal" style="max-width:700px">
+     <header><h3>Editar venta #${nro} — ${v.cliente}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <div class="body">
+       <div class="field" style="max-width:260px"><label>¿Necesita factura? (IVA 21%)</label>
+         <select id="edFactura" onchange="editDraft.factura=this.value==='si';editRenderItems()">
+           <option value="no" ${!editDraft.factura?'selected':''}>No</option>
+           <option value="si" ${editDraft.factura?'selected':''}>Sí — sumar IVA</option>
+         </select>
+       </div>
+       <h4 style="margin:16px 0 6px;color:#374151">Productos</h4>
+       <div class="row" style="align-items:end">
+         <div class="field" style="flex:3"><label>Agregar producto</label>
+           <select id="edProd"><option value="">Elegí un producto…</option>${activos.map(p=>`<option value="${p.id}">${(p.nombre+(p.desc?' · '+p.desc:'')).replace(/"/g,'&quot;')} — ${money(p.precio)}</option>`).join("")}</select>
+         </div>
+         <div class="field" style="flex:0 0 80px"><label>Cant.</label><input type="number" id="edCant" value="1" min="1"></div>
+         <button class="btn btn-green" onclick="editAddItem()">＋ Agregar</button>
+       </div>
+       <div class="table-wrap"><table style="margin-top:10px"><thead id="edItemsHead"></thead><tbody id="edItems"></tbody></table></div>
+
+       <h4 style="margin:16px 0 6px;color:#374151">Pagos</h4>
+       <div id="edPagos"></div>
+       <div class="row" style="align-items:end;margin-top:8px">
+         <div class="field" style="flex:0 0 150px"><label>Agregar pago</label><input type="number" id="edPagoMonto" placeholder="0" min="0"></div>
+         <div class="field" style="flex:2"><label>Método</label><select id="edPagoMetodo"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option>Cuenta corriente</option></select></div>
+         <button class="btn btn-ghost" onclick="editAddPago()">＋ Pago</button>
+       </div>
+
+       <h4 style="margin:16px 0 6px;color:#374151">Nota / observación</h4>
+       <textarea id="edNota" placeholder="Observaciones de la venta…">${(editDraft.nota||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+
+       <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:16px" id="edTotales"></div>
+     </div>
+     <div class="foot">
+       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+       <button class="btn btn-green" onclick="guardarEdicionVenta(${nro})">💾 Guardar cambios</button>
+     </div>
+    </div>
+   </div>`;
+  editRenderItems(); editRenderPagos();
+}
+function editTotales(){
+  const total=editDraft.items.reduce((a,i)=>a+i.precio*i.cant,0);
+  const iva=editDraft.factura?total*IVA_PCT:0, gran=total+iva;
+  const cobrado=editDraft.cobradoPrevio+editDraft.nuevosPagos.reduce((a,p)=>a+(+p.monto||0),0);
+  return {total,iva,gran,cobrado,saldo:gran-cobrado};
+}
+function editRenderItems(){
+  const head=$("#edItemsHead"), tb=$("#edItems"); if(!tb) return;
+  head.innerHTML = editDraft.factura
+    ? `<tr><th>Cant.</th><th>Producto</th><th>Precio</th><th>IVA</th><th>Subtotal</th><th></th></tr>`
+    : `<tr><th>Cant.</th><th>Producto</th><th>Precio</th><th>Subtotal</th><th></th></tr>`;
+  const cs=editDraft.factura?6:5;
+  if(!editDraft.items.length){ tb.innerHTML=`<tr><td colspan="${cs}" class="empty">Sin productos. Agregá al menos uno.</td></tr>`; editRenderTotales(); return; }
+  tb.innerHTML=editDraft.items.map((i,idx)=>{
+    const base=i.precio*i.cant, iva=editDraft.factura?base*IVA_PCT:0;
+    const ci=`<input type="number" min="1" value="${i.cant}" style="width:64px;padding:5px" onchange="editSetCant(${idx},this.value)">`;
+    return editDraft.factura
+      ? `<tr><td>${ci}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`
+      : `<tr><td>${ci}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`;
+  }).join("");
+  editRenderTotales();
+}
+function editSetCant(idx,val){ editDraft.items[idx].cant=Math.max(1,+val||1); editRenderItems(); }
+function editDelItem(idx){ editDraft.items.splice(idx,1); editRenderItems(); }
+function editAddItem(){
+  const id=+$("#edProd").value; if(!id){ toast("Elegí un producto de la lista"); return; }
+  const p=PRODUCTOS.find(x=>x.id===id); if(!p) return;
+  const cant=Math.max(1,+$("#edCant").value||1);
+  const nombre=p.nombre+(p.desc?" · "+p.desc:"");
+  const ex=editDraft.items.find(i=>i.nombre===nombre);
+  if(ex) ex.cant+=cant; else editDraft.items.push({id:p.id,nombre,precio:p.precio,cant,categoria:p.cat});
+  $("#edProd").value=""; $("#edCant").value=1; editRenderItems();
+}
+function editAddPago(){
+  const monto=+$("#edPagoMonto").value||0; if(monto<=0){ toast("Ingresá un monto de pago válido"); return; }
+  editDraft.nuevosPagos.push({monto,metodo:$("#edPagoMetodo").value,fecha:hoyISO(),usuario:nombreUsuario()});
+  $("#edPagoMonto").value=""; editRenderPagos(); editRenderTotales();
+}
+function editDelNuevoPago(idx){ editDraft.nuevosPagos.splice(idx,1); editRenderPagos(); editRenderTotales(); }
+function editRenderPagos(){
+  const c=$("#edPagos"); if(!c) return;
+  const prev=editDraft.pagosPrevios.length
+    ? editDraft.pagosPrevios.map(p=>`<div class="l" style="padding:5px 0"><span>${fmtFechaCorta(p.fecha)} · ${p.metodo||'Pago'}</span><b>${money(p.monto)}</b></div>`).join("")
+    : `<div class="l" style="padding:5px 0"><span>Cobrado inicial</span><b>${money(editDraft.cobradoPrevio)}</b></div>`;
+  const nuevos=editDraft.nuevosPagos.map((p,idx)=>`<div class="l" style="padding:5px 0;color:var(--ok)"><span>＋ ${p.metodo} (nuevo)</span><span><b>${money(p.monto)}</b> <button class="btn btn-ghost btn-sm" onclick="editDelNuevoPago(${idx})">🗑️</button></span></div>`).join("");
+  c.innerHTML=prev+nuevos;
+}
+function editRenderTotales(){
+  const c=$("#edTotales"); if(!c) return; const t=editTotales();
+  c.innerHTML=`${editDraft.factura?`<div class="l">Subtotal<b>${money(t.total)}</b></div><div class="l">IVA (21%)<b>${money(t.iva)}</b></div>`:''}
+    <div class="l">Total<b>${money(t.gran)}</b></div>
+    <div class="l">Cobrado<b class="green">${money(t.cobrado)}</b></div>
+    <div class="l">Saldo<b class="${t.saldo>0?'red':'green'}">${money(t.saldo)}</b></div>`;
+}
+function editAplicarStockDelta(){
+  const orig={}; editDraft.itemsOrig.forEach(i=>orig[i.nombre]=(orig[i.nombre]||0)+i.cant);
+  const now={}; editDraft.items.forEach(i=>now[i.nombre]=(now[i.nombre]||0)+i.cant);
+  new Set([...Object.keys(orig),...Object.keys(now)]).forEach(nom=>{
+    const delta=(now[nom]||0)-(orig[nom]||0); if(!delta) return;
+    const p=PRODUCTOS.find(x=>(x.nombre+(x.desc?" · "+x.desc:""))===nom)||PRODUCTOS.find(x=>x.nombre===nom);
+    if(p && p.descStock && !isNaN(+p.stock)){ p.stock=String(Math.max(0,(+p.stock)-delta)); if(window.persistirStock) window.persistirStock(p); }
+  });
+}
+function guardarEdicionVenta(nro){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return false;
+  if(!editDraft.items.length){ toast("⚠️ La venta tiene que tener al menos un producto"); return false; }
+  const t=editTotales(); const nota=($("#edNota")?.value||"").trim();
+  editAplicarStockDelta();
+  const cambios=[];
+  if(JSON.stringify(editDraft.itemsOrig)!==JSON.stringify(editDraft.items.map(i=>({nombre:i.nombre,cant:i.cant})))) cambios.push("productos");
+  if((v.nota||"")!==nota) cambios.push("nota");
+  if(!!v.factura!==editDraft.factura) cambios.push(editDraft.factura?"IVA agregado":"IVA quitado");
+  if(editDraft.nuevosPagos.length) cambios.push(`${editDraft.nuevosPagos.length} pago(s) nuevo(s)`);
+  const pagosBase=(v.pagos&&v.pagos.length)?v.pagos.slice():(editDraft.cobradoPrevio>0?[{monto:editDraft.cobradoPrevio,metodo:'Inicial',fecha:v.fecha,usuario:v.vendedor}]:[]);
+  v.items=editDraft.items.map(i=>({id:i.id,nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:i.categoria}));
+  v.nota=nota; v.factura=editDraft.factura; v.total=t.total; v.iva=t.iva; v.saldo=t.saldo;
+  v.pagos=pagosBase.concat(editDraft.nuevosPagos);
+  auditar("Venta modificada","venta",nro,cambios.length?cambios.join(", "):"sin cambios relevantes");
+  cerrarModal(); renderTablaVentas(); toast(`✅ Venta #${nro} actualizada`);
+  return true;
+}
+
+/* ====== REENVIAR comprobante / correo completo ====== */
+function abrirReenviar(nro){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
+  const c=CLIENTES.find(x=>x.id===v.clienteId)||{}; const mail=c.mail||'';
+  $("#modalRoot").innerHTML=`
+   <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal" style="max-width:470px">
+     <header><h3>Reenviar a ${v.cliente}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <div class="body">
+       <p style="font-size:14px;line-height:1.5">Correo del cliente: <b>${mail||'—'}</b></p>
+       ${!mail?`<div class="help" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;margin-top:10px">Este cliente no tiene email cargado. Editá el cliente para poder reenviarle.</div>`:`
+       <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+         <button class="btn btn-green" style="justify-content:center" onclick="reenviarComprobante(${nro})">📄 Reenviar comprobante (remito PDF)</button>
+         <button class="btn btn-blue" style="justify-content:center" onclick="reenviarCorreoCompleto(${nro})">✉️ Reenviar correo completo de compra</button>
+       </div>`}
+     </div>
+     <div class="foot"><button class="btn btn-ghost" onclick="cerrarModal()">Cerrar</button></div>
+    </div>
+   </div>`;
+}
+/* En modo demo solo avisan; conexion.js los reemplaza para enviar de verdad. */
+function reenviarComprobante(nro){ toast("✉️ (demo) Comprobante reenviado"); cerrarModal(); }
+function reenviarCorreoCompleto(nro){ toast("✉️ (demo) Correo completo reenviado"); cerrarModal(); }
+
 /* Gestionar el catálogo de tipos de estado (solo maestro) */
 function abrirGestionEstados(){
-  if(!puedeGestionar()){ toast("No tenés permiso para gestionar los estados"); return; }
+  if(!puede('cambiar_estado')){ toast("No tenés permiso para gestionar los estados"); return; }
   estadoDraft = ESTADOS.map(e=>({...e}));
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
@@ -1182,59 +1512,122 @@ function guardarEstados(){
 }
 
 /* ====== CLIENTES ====== */
+function cliFiltrados(){
+  const q=(cliQuery||'').trim().toLowerCase();
+  return CLIENTES.filter(c=>{
+    if(cliProv && (c.provincia||'')!==cliProv) return false;
+    if(cliEstado==='activo' && c.activo===false) return false;
+    if(cliEstado==='inactivo' && c.activo!==false) return false;
+    if(q && !(((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')+' '+(c.provincia||'')).toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
 function viewClientes(){
+  const gestor=puede('gestionar_clientes');
+  const provincias=[...new Set(CLIENTES.map(c=>c.provincia).filter(Boolean))].sort((a,b)=>(""+a).localeCompare(b,'es'));
   $("#main").innerHTML=`
     <h1 class="page">Clientes</h1>
     <div class="card">
-      <div class="toolbar"><span class="legend">${CLIENTES.length} clientes</span><button class="btn btn-blue" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button></div>
+      <div class="toolbar">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="legend" id="cliCount"></span>
+          <input class="search" placeholder="🔍 Nombre, DNI, teléfono, email, localidad…" value="${(cliQuery||'').replace(/"/g,'&quot;')}" oninput="cliQuery=this.value;renderCliTabla()">
+          <select style="max-width:190px" onchange="cliProv=this.value;renderCliTabla()"><option value="">Todas las provincias</option>${provincias.map(p=>`<option ${cliProv===p?'selected':''}>${p}</option>`).join("")}</select>
+          <select style="max-width:160px" onchange="cliEstado=this.value;renderCliTabla()"><option value="" ${cliEstado===''?'selected':''}>Todos</option><option value="activo" ${cliEstado==='activo'?'selected':''}>Solo activos</option><option value="inactivo" ${cliEstado==='inactivo'?'selected':''}>Solo inactivos</option></select>
+        </div>
+        ${gestor?`<button class="btn btn-blue" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button>`:''}
+      </div>
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Saldo</th><th>Estado</th>${puedeGestionar()?'<th>Acciones</th>':''}</tr></thead>
-        <tbody>${CLIENTES.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${c.nombre} ${c.apellido||''}</b></td><td>${c.dni||'—'}</td><td>${c.tel}</td><td>${c.mail}</td><td>${c.localidad||'—'}</td><td>${c.provincia||'—'}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${puedeGestionar()?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join("")}</tbody>
+        <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Saldo</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <tbody id="tCli"></tbody>
       </table>
+      </div>
     </div>`;
+  renderCliTabla();
+}
+function renderCliTabla(){
+  const tb=$("#tCli"); if(!tb) return; const gestor=puede('gestionar_clientes');
+  const rows=cliFiltrados(); const cnt=$("#cliCount"); if(cnt) cnt.textContent=`${rows.length} de ${CLIENTES.length}`;
+  tb.innerHTML=rows.length?rows.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${c.nombre} ${c.apellido||''}</b></td><td>${c.dni||'—'}</td><td>${c.tel||'—'}</td><td>${c.mail||'—'}</td><td>${c.localidad||'—'}</td><td>${c.provincia||'—'}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?9:8}" class="empty">Sin clientes con estos filtros.</td></tr>`;
 }
 function toggleCliente(id){
-  if(!puedeGestionar()){ toast("No tenés permiso"); return; }
+  if(!puede('gestionar_clientes')){ toast("No tenés permiso"); return; }
   const c=CLIENTES.find(x=>x.id===id); if(!c) return;
   c.activo = c.activo===false;
+  auditar(c.activo?"Cliente activado":"Cliente inactivado","cliente",id,`${c.nombre} ${c.apellido||''}`);
   viewClientes(); toast(c.activo?`✅ "${c.nombre}" activado`:`⏸️ "${c.nombre}" inactivado`);
 }
 
 /* ====== PRODUCTOS ====== */
+function prodFiltrados(){
+  const q=(prodQuery||'').trim().toLowerCase();
+  let rows=PRODUCTOS.filter(p=>{
+    if(prodCatFiltro && p.cat!==prodCatFiltro) return false;
+    if(prodEstado==='activo' && p.activo===false) return false;
+    if(prodEstado==='inactivo' && p.activo!==false) return false;
+    if(q && !(((p.nombre||'')+' '+(p.desc||'')+' '+(p.cat||'')).toLowerCase().includes(q))) return false;
+    return true;
+  });
+  // activos primero, inactivos al final; dentro, por nombre
+  return rows.sort((a,b)=>{ const ai=a.activo===false?1:0, bi=b.activo===false?1:0; if(ai!==bi) return ai-bi; return (""+a.nombre).localeCompare(""+b.nombre,'es'); });
+}
 function viewProductos(){
-  const filtrados = PRODUCTOS.filter(p=>!prodCatFiltro || p.cat===prodCatFiltro);
+  const gestor=puede('gestionar_productos');
   $("#main").innerHTML=`
     <h1 class="page">Productos</h1>
-    <div class="hint">Solo se pueden vender productos cargados acá. El precio queda fijado al crearlos (Administrador y Maestro pueden editarlo).</div>
+    <div class="hint">Solo se pueden vender productos cargados acá. El precio queda fijado al crearlos${gestor?' (lo podés editar)':' (lo edita un Administrador/Maestro)'}.</div>
     <div class="card">
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <span class="legend">${filtrados.length} de ${PRODUCTOS.length} productos</span>
-          <select style="max-width:210px" onchange="prodCatFiltro=this.value;viewProductos()">
+          <span class="legend" id="prodCount"></span>
+          <input class="search" placeholder="🔍 Nombre, descripción, categoría…" value="${(prodQuery||'').replace(/"/g,'&quot;')}" oninput="prodQuery=this.value;renderProdTabla()">
+          <select style="max-width:200px" onchange="prodCatFiltro=this.value;renderProdTabla()">
             <option value="">Todas las categorías</option>
             ${CATEGORIAS.map(c=>`<option ${prodCatFiltro===c?'selected':''}>${c}</option>`).join("")}
           </select>
+          <select style="max-width:170px" onchange="prodEstado=this.value;renderProdTabla()">
+            <option value="" ${prodEstado===''?'selected':''}>Todos los estados</option>
+            <option value="activo" ${prodEstado==='activo'?'selected':''}>Solo activos</option>
+            <option value="inactivo" ${prodEstado==='inactivo'?'selected':''}>Solo inactivos</option>
+          </select>
         </div>
         <div style="display:flex;gap:8px">
-          ${puedeGestionar()?`<button class="btn btn-ghost" onclick="abrirGestionCategorias()">⚙️ Categorías</button>`:''}
-          ${puedeGestionar()?`<button class="btn btn-blue" onclick="abrirModalProducto()">＋ Nuevo Producto</button>`:''}
+          ${gestor?`<button class="btn btn-ghost" onclick="abrirGestionCategorias()">⚙️ Categorías</button>`:''}
+          ${gestor?`<button class="btn btn-blue" onclick="abrirModalProducto()">＋ Nuevo Producto</button>`:''}
         </div>
       </div>
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>Descripción</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Estado</th>${puedeGestionar()?'<th>Acciones</th>':''}</tr></thead>
-        <tbody>${filtrados.length?filtrados.map(p=>`<tr class="${p.activo===false?'inactivo':''}"><td><b>${p.nombre}</b></td><td>${p.desc||'—'}</td><td>${p.cat||'—'}</td><td><b>${money(p.precio)}</b></td><td>${p.stock}</td><td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${puedeGestionar()?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${puedeGestionar()?7:6}" class="empty">Sin productos en esta categoría.</td></tr>`}</tbody>
+        <thead><tr><th>Nombre</th><th>Descripción</th><th>Categoría</th><th>Precio</th>${gestor?'<th>Costo</th>':''}<th>Stock</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <tbody id="tProd"></tbody>
       </table>
+      </div>
     </div>`;
+  renderProdTabla();
+}
+function renderProdTabla(){
+  const tb=$("#tProd"); if(!tb) return;
+  const gestor=puede('gestionar_productos');
+  const cols = 6 + (gestor?2:0);
+  const filtrados=prodFiltrados();
+  const cnt=$("#prodCount"); if(cnt) cnt.textContent=`${filtrados.length} de ${PRODUCTOS.length}`;
+  tb.innerHTML=filtrados.length?filtrados.map(p=>{
+    const stockTxt = (p.stock===''||p.stock==null)?'No Desc':p.stock;
+    const stockCell = p.descStock ? `${stockTxt} <span class="cont cont-ok" title="Descuenta stock automáticamente">auto</span>` : stockTxt;
+    return `<tr class="${p.activo===false?'inactivo':''}"><td><b>${p.nombre}</b></td><td>${p.desc||'—'}</td><td>${p.cat||'—'}</td><td><b>${money(p.precio)}</b></td>${gestor?`<td>${(p.costo!=null&&p.costo!=='')?money(p.costo):'—'}</td>`:''}<td>${stockCell}</td><td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
+  }).join(""):`<tr><td colspan="${cols}" class="empty">Sin productos con estos filtros.</td></tr>`;
 }
 
 /* Alta / edición de producto */
 function abrirModalProducto(id){
-  if(!puedeGestionar()){ toast("No tenés permiso"); return; }
+  if(!puede('gestionar_productos')){ toast("No tenés permiso"); return; }
   const p = (id!=null) ? PRODUCTOS.find(x=>x.id===id) : null;
   const ed = !!p;
+  const precioBloqueado = ed && !puede('editar_precio');
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
-      <div class="modal" style="max-width:540px">
+      <div class="modal" style="max-width:560px">
         <header><h3>${ed?'Editar producto':'Nuevo producto'}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
           <div class="row">
@@ -1245,10 +1638,19 @@ function abrirModalProducto(id){
             <div class="field"><label>Categoría <span class="req">*</span></label>
               <select id="pCat"><option value="">Seleccionar…</option>${CATEGORIAS.map(c=>`<option ${ed&&p.cat===c?'selected':''}>${c}</option>`).join("")}</select>
             </div>
-            <div class="field"><label>Precio <span class="req">*</span></label><input id="pPrecio" type="number" value="${ed?p.precio:''}" placeholder="0"></div>
-            <div class="field"><label>Stock</label><input id="pStock" value="${ed?p.stock:'No Desc'}" placeholder="No Desc"></div>
+            <div class="field"><label>Precio (venta) <span class="req">*</span></label><input id="pPrecio" type="number" value="${ed?p.precio:''}" placeholder="0" ${precioBloqueado?'readonly title="Solo el Maestro o quien tenga el permiso puede editar precios" style="background:#f3f4f6"':''}></div>
+            <div class="field"><label>Costo</label><input id="pCosto" type="number" value="${ed&&p.costo!=null?p.costo:''}" placeholder="0"></div>
           </div>
-          <div class="help">El precio queda fijado al guardar. El Vendedor no puede modificarlo.</div>
+          <div class="row" style="margin-top:12px">
+            <div class="field"><label>Stock</label><input id="pStock" value="${ed?(p.stock===''||p.stock==null?'No Desc':p.stock):'No Desc'}" placeholder="No Desc o un número"></div>
+            <div class="field"><label>Descuenta stock automáticamente</label>
+              <select id="pDescStock">
+                <option value="no" ${ed&&p.descStock?'':'selected'}>No</option>
+                <option value="si" ${ed&&p.descStock?'selected':''}>Sí — descontar en cada venta</option>
+              </select>
+            </div>
+          </div>
+          <div class="help">El <b>costo</b> se usa para los reportes de rentabilidad. Si activás <b>descuenta stock</b> y el stock es un número, cada venta lo baja solo.</div>
         </div>
         <div class="foot">
           <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
@@ -1259,25 +1661,28 @@ function abrirModalProducto(id){
 }
 function guardarProducto(id){
   const nombre=$("#pNombre").value.trim(), cat=$("#pCat").value, precioRaw=$("#pPrecio").value, desc=$("#pDesc").value.trim(), stockRaw=$("#pStock").value.trim();
+  const costoRaw=$("#pCosto").value, descStock=$("#pDescStock").value==='si';
   let falta=false;
   [["pNombre",!nombre],["pCat",!cat],["pPrecio",precioRaw===""||isNaN(+precioRaw)]].forEach(([id2,bad])=>{$("#"+id2).classList.toggle("err",bad); if(bad) falta=true;});
   if(falta){ toast("⚠️ Completá nombre, categoría y un precio válido"); return; }
   const precio=+precioRaw;
-  const stock = stockRaw==="" ? "No Desc" : (isNaN(+stockRaw) ? stockRaw : +stockRaw);
-  if(id!=null){ Object.assign(PRODUCTOS.find(x=>x.id===id),{nombre,desc,cat,precio,stock}); }
-  else { PRODUCTOS.push({id:Math.max(0,...PRODUCTOS.map(p=>p.id))+1,nombre,desc,cat,precio,stock}); }
+  const costo = (costoRaw===""||isNaN(+costoRaw)) ? 0 : +costoRaw;
+  const stock = stockRaw==="" ? "No Desc" : (isNaN(+stockRaw) ? stockRaw : String(+stockRaw));
+  if(id!=null){ Object.assign(PRODUCTOS.find(x=>x.id===id),{nombre,desc,cat,precio,costo,stock,descStock}); auditar("Producto modificado","producto",id,nombre); }
+  else { const nid=Math.max(0,...PRODUCTOS.map(p=>p.id))+1; PRODUCTOS.push({id:nid,nombre,desc,cat,precio,costo,stock,descStock,activo:true}); auditar("Producto creado","producto",nid,nombre); }
   cerrarModal(); viewProductos(); toast("✅ Producto guardado");
 }
 function toggleProducto(id){
-  if(!puedeGestionar()){ toast("No tenés permiso"); return; }
+  if(!puede('gestionar_productos')){ toast("No tenés permiso"); return; }
   const p=PRODUCTOS.find(x=>x.id===id); if(!p) return;
   p.activo = p.activo===false;
+  auditar(p.activo?"Producto activado":"Producto inactivado","producto",id,p.nombre);
   viewProductos(); toast(p.activo?`✅ "${p.nombre}" activado`:`⏸️ "${p.nombre}" inactivado (no se vende)`);
 }
 
 /* Gestión de categorías */
 function abrirGestionCategorias(){
-  if(!puedeGestionar()){ toast("No tenés permiso"); return; }
+  if(!puede('gestionar_productos')){ toast("No tenés permiso"); return; }
   catDraft = CATEGORIAS.slice();
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
@@ -1315,25 +1720,88 @@ function guardarCategorias(){
 }
 
 /* ====== USUARIOS ====== */
+function usrFiltrados(){
+  const q=(usrQuery||'').trim().toLowerCase();
+  return USUARIOS.map((u,i)=>({u,i})).filter(({u})=>{
+    if(usrRol && u.rol!==usrRol) return false;
+    if(q && !(((u.nombre||'')+' '+(u.ap||'')+' '+(u.user||'')+' '+(u.rol||'')).toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
 function viewUsuarios(){
+  const gestor=puede('gestionar_usuarios');
   $("#main").innerHTML=`
     <h1 class="page">Usuarios</h1>
-    <div class="hint">Quién accede al sistema y con qué rol. <b>Vendedor:</b> solo Vender y Ventas · <b>Administrador:</b> casi todo · <b>Maestro:</b> todo, incluido gestionar usuarios.</div>
+    <div class="hint">Quién accede al sistema y con qué rol. <b>Vendedor:</b> vender y sus ventas · <b>Producción:</b> ver pedidos y cambiar estados de fabricación · <b>Administrador:</b> casi todo · <b>Maestro:</b> todo. Los permisos de cada rol se configuran con el botón <b>⚙️ Permisos por rol</b>.</div>
     <div class="card">
       <div class="toolbar">
-        <span class="legend">${USUARIOS.length} usuarios</span>
-        ${puedeUsuarios()?`<button class="btn btn-blue" onclick="abrirModalUsuario()">＋ Nuevo Usuario</button>`:`<span class="legend">Solo el Maestro puede crear o editar usuarios</span>`}
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="legend" id="usrCount"></span>
+          <input class="search" placeholder="🔍 Nombre, usuario, rol…" value="${(usrQuery||'').replace(/"/g,'&quot;')}" oninput="usrQuery=this.value;renderUsrTabla()">
+          <select style="max-width:180px" onchange="usrRol=this.value;renderUsrTabla()"><option value="">Todos los roles</option>${ROLES.map(r=>`<option ${usrRol===r?'selected':''}>${r}</option>`).join("")}</select>
+        </div>
+        <div style="display:flex;gap:8px">
+          ${gestor?`<button class="btn btn-ghost" onclick="abrirPermisos()">⚙️ Permisos por rol</button>`:''}
+          ${gestor?`<button class="btn btn-blue" onclick="abrirModalUsuario()">＋ Nuevo Usuario</button>`:`<span class="legend">No tenés permiso para gestionar usuarios</span>`}
+        </div>
       </div>
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>Apellido</th><th>Usuario</th><th>Rol</th><th>Contraseña</th><th>Estado</th>${puedeUsuarios()?'<th>Acciones</th>':''}</tr></thead>
-        <tbody>${USUARIOS.map((u,i)=>`<tr class="${u.activo?'':'inactivo'}"><td>${u.nombre}</td><td>${u.ap}</td><td>${u.user}</td><td><b>${u.rol}</b></td><td>${u.pass?'••••••':'—'}</td><td>${u.activo?'<span class="badge b-ent">Activo</span>':'<span class="badge b-pend">Inactivo</span>'}</td>${puedeUsuarios()?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalUsuario(${i})">✏️</button><button class="btn btn-ghost btn-sm" title="${u.activo?'Inactivar':'Activar'}" onclick="toggleUsuario(${i})">${u.activo?'🟢':'⚪'}</button></td>`:''}</tr>`).join("")}</tbody>
+        <thead><tr><th>Nombre</th><th>Apellido</th><th>Usuario</th><th>Rol</th><th>Contraseña</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <tbody id="tUsr"></tbody>
       </table>
+      </div>
     </div>`;
+  renderUsrTabla();
+}
+function renderUsrTabla(){
+  const tb=$("#tUsr"); if(!tb) return; const gestor=puede('gestionar_usuarios');
+  const rows=usrFiltrados(); const cnt=$("#usrCount"); if(cnt) cnt.textContent=`${rows.length} de ${USUARIOS.length}`;
+  tb.innerHTML=rows.length?rows.map(({u,i})=>`<tr class="${u.activo?'':'inactivo'}"><td>${u.nombre}</td><td>${u.ap}</td><td>${u.user}</td><td><b>${u.rol}</b></td><td>${u.pass?'••••••':'—'}</td><td>${u.activo?'<span class="badge b-ent">Activo</span>':'<span class="badge b-pend">Inactivo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalUsuario(${i})">✏️</button><button class="btn btn-ghost btn-sm" title="${u.activo?'Inactivar':'Activar'}" onclick="toggleUsuario(${i})">${u.activo?'🟢':'⚪'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?7:6}" class="empty">Sin usuarios con estos filtros.</td></tr>`;
+}
+
+/* ====== PANEL DE PERMISOS POR ROL (configurable) ====== */
+function abrirPermisos(){
+  if(!puede('gestionar_usuarios')){ toast("No tenés permiso"); return; }
+  permisosDraft = JSON.parse(JSON.stringify(PERMISOS));
+  ROLES_CONFIG.forEach(r=>{ permisosDraft[r]=permisosDraft[r]||{}; PERMISOS_LISTA.forEach(p=>{ if(permisosDraft[r][p.k]===undefined) permisosDraft[r][p.k]=(PERMISOS_DEFAULT[r]||{})[p.k]?1:0; }); });
+  $("#modalRoot").innerHTML=`
+   <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal" style="max-width:760px">
+     <header><h3>⚙️ Permisos por rol</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <div class="body">
+       <div class="help" style="margin-top:0">Tildá lo que puede hacer cada rol. El <b>Maestro</b> siempre tiene todos los permisos (no se configura).</div>
+       <div class="table-wrap" style="margin-top:12px">
+       <table>
+         <thead><tr><th>Permiso</th>${ROLES_CONFIG.map(r=>`<th style="text-align:center">${r}</th>`).join("")}</tr></thead>
+         <tbody id="permRows"></tbody>
+       </table>
+       </div>
+     </div>
+     <div class="foot">
+       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+       <button class="btn btn-green" onclick="guardarPermisos()">💾 Guardar permisos</button>
+     </div>
+    </div>
+   </div>`;
+  renderPermisos();
+}
+function renderPermisos(){
+  const tb=$("#permRows"); if(!tb) return;
+  tb.innerHTML=PERMISOS_LISTA.map(p=>`<tr><td>${p.t}<br><small class="legend">${p.k}</small></td>${ROLES_CONFIG.map(r=>`<td style="text-align:center"><input type="checkbox" style="width:auto;transform:scale(1.25)" ${permisosDraft[r][p.k]?'checked':''} onchange="permisosDraft['${r}']['${p.k}']=this.checked?1:0"></td>`).join("")}</tr>`).join("");
+}
+function guardarPermisos(){
+  PERMISOS = JSON.parse(JSON.stringify(permisosDraft));
+  auditar("Permisos modificados","permisos","",ROLES_CONFIG.join(", "));
+  if(window.persistirPermisos) window.persistirPermisos(PERMISOS);
+  cerrarModal();
+  renderSidebar();
+  toast("✅ Permisos actualizados");
 }
 
 /* Alta / edición de usuario (solo Maestro) */
 function abrirModalUsuario(i){
-  if(!puedeUsuarios()){ toast("Solo el Maestro puede gestionar usuarios"); return; }
+  if(!puede('gestionar_usuarios')){ toast("No tenés permiso para gestionar usuarios"); return; }
   const u = (i!=null) ? USUARIOS[i] : null;
   const ed = !!u;
   $("#modalRoot").innerHTML=`
@@ -1351,7 +1819,7 @@ function abrirModalUsuario(i){
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field"><label>Rol <span class="req">*</span></label>
-              <select id="uRol">${ROLES.map(r=>`<option ${ed&&u.rol===r?'selected':''}>${r}</option>`).join("")}</select>
+              <select id="uRol">${ROLES.filter(r=>r!=='Maestro'||esMaestro()).map(r=>`<option ${ed&&u.rol===r?'selected':''}>${r}</option>`).join("")}</select>
             </div>
             <div class="field"><label>Estado</label>
               <select id="uActivo"><option value="1" ${(!ed||u.activo)?'selected':''}>Activo</option><option value="0" ${ed&&!u.activo?'selected':''}>Inactivo</option></select>
@@ -1372,15 +1840,67 @@ function guardarUsuario(i){
   [["uNombre",!nombre],["uAp",!ap],["uUser",!user]].forEach(([id2,bad])=>{$("#"+id2).classList.toggle("err",bad); if(bad) falta=true;});
   if(falta){ toast("⚠️ Completá nombre, apellido y usuario"); return; }
   if(i==null && !pass){ $("#uPass").classList.add("err"); toast("⚠️ Asigná una contraseña"); return; }
-  if(i!=null){ const u=USUARIOS[i]; Object.assign(u,{nombre,ap,user,rol,activo}); if(pass) u.pass=pass; }
-  else { USUARIOS.push({nombre,ap,user,rol,activo,pass}); }
+  if(i!=null){ const u=USUARIOS[i]; Object.assign(u,{nombre,ap,user,rol,activo}); if(pass) u.pass=pass; auditar("Usuario modificado","usuario",user,`${nombre} ${ap} · ${rol}`); }
+  else { USUARIOS.push({nombre,ap,user,rol,activo,pass}); auditar("Usuario creado","usuario",user,`${nombre} ${ap} · ${rol}`); }
   cerrarModal(); viewUsuarios(); toast("✅ Usuario guardado");
 }
 function toggleUsuario(i){
-  if(!puedeUsuarios()){ toast("Solo el Maestro puede gestionar usuarios"); return; }
+  if(!puede('gestionar_usuarios')){ toast("No tenés permiso para gestionar usuarios"); return; }
   const u=USUARIOS[i]; if(!u) return;
   u.activo=!u.activo;
+  auditar(u.activo?"Usuario activado":"Usuario inactivado","usuario",u.user,`${u.nombre} ${u.ap}`);
   viewUsuarios(); toast(u.activo?`✅ ${u.nombre} ${u.ap} activado`:`⏸️ ${u.nombre} ${u.ap} inactivado`);
+}
+
+/* ====== AUDITORÍA / HISTORIAL ====== */
+function fmtFechaHora(iso){ if(!iso) return '—'; const d=new Date(iso); if(isNaN(d)) return iso; const p=n=>String(n).padStart(2,'0'); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function audFiltradas(){
+  const q=(audQuery||'').trim().toLowerCase();
+  return AUDITORIA.filter(l=>{
+    const fecha=(l.creado||'').slice(0,10);
+    if(audDesde && fecha<audDesde) return false;
+    if(audHasta && fecha>audHasta) return false;
+    if(audAccion && l.accion!==audAccion) return false;
+    if(q && !(((l.usuario||'')+' '+(l.accion||'')+' '+(l.entidad||'')+' '+(l.detalle||'')+' '+(l.rol||'')).toLowerCase().includes(q))) return false;
+    return true;
+  });
+}
+function viewAuditoria(){
+  if(!puede('ver_auditoria')){ $("#main").innerHTML=`<h1 class="page">Auditoría</h1><div class="card"><div class="empty">No tenés permiso para ver el historial.</div></div>`; return; }
+  const acciones=[...new Set(AUDITORIA.map(l=>l.accion).filter(Boolean))].sort((a,b)=>(""+a).localeCompare(b,'es'));
+  $("#main").innerHTML=`
+    <h1 class="page">Auditoría / Historial</h1>
+    <div class="hint">Registro interno de cambios en <b>ventas, productos y usuarios</b>: quién lo hizo, cuándo y qué acción realizó.</div>
+    <div class="card">
+      <div class="row" style="align-items:end">
+        <div class="field" style="flex:0 0 150px"><label>Desde</label><input type="date" value="${audDesde}" onchange="audDesde=this.value;renderAudTabla()"></div>
+        <div class="field" style="flex:0 0 150px"><label>Hasta</label><input type="date" value="${audHasta}" onchange="audHasta=this.value;renderAudTabla()"></div>
+        <div class="field"><label>Acción</label><select onchange="audAccion=this.value;renderAudTabla()"><option value="">Todas las acciones</option>${acciones.map(a=>`<option ${audAccion===a?'selected':''}>${a}</option>`).join("")}</select></div>
+        <div style="flex:1;min-width:10px"></div>
+        <input class="search" placeholder="🔍 Usuario, acción, detalle…" value="${(audQuery||'').replace(/"/g,'&quot;')}" oninput="audQuery=this.value;renderAudTabla()">
+      </div>
+    </div>
+    <div class="card">
+      <div class="toolbar"><span class="legend" id="audCount"></span>${puede('exportar')?`<button class="btn btn-ghost" onclick="exportarAuditoria()">📊 Excel</button>`:''}</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Rol</th><th>Acción</th><th>Detalle</th></tr></thead>
+        <tbody id="tAud"></tbody>
+      </table></div>
+    </div>`;
+  renderAudTabla();
+}
+function renderAudTabla(){
+  const tb=$("#tAud"); if(!tb) return;
+  const rows=audFiltradas(); const cnt=$("#audCount"); if(cnt) cnt.textContent=`${rows.length} registro(s)`;
+  tb.innerHTML=rows.length?rows.map(l=>`<tr><td style="white-space:nowrap">${fmtFechaHora(l.creado)}</td><td>${l.usuario||'—'}</td><td>${l.rol||''}</td><td><b>${l.accion||''}</b>${l.entidad?` <small class="legend">${l.entidad}${l.entidad_id?' #'+l.entidad_id:''}</small>`:''}</td><td>${(l.detalle||'').replace(/</g,'&lt;')}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">Sin registros con estos filtros.</td></tr>`;
+}
+function exportarAuditoria(){
+  if(!puede('exportar')){ toast("No tenés permiso para exportar"); return; }
+  const rows=audFiltradas(); if(!rows.length){ toast("⚠️ No hay registros para exportar"); return; }
+  const cols=["Fecha y hora","Usuario","Rol","Acción","Entidad","Detalle"];
+  const filas=rows.map(l=>({"Fecha y hora":fmtFechaHora(l.creado),"Usuario":l.usuario||"","Rol":l.rol||"","Acción":l.accion||"","Entidad":(l.entidad||"")+(l.entidad_id?` #${l.entidad_id}`:""),"Detalle":l.detalle||""}));
+  if(window.XLSX){ const ws=XLSX.utils.json_to_sheet(filas,{header:cols}); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"Auditoria"); XLSX.writeFile(wb,"Auditoria.xlsx"); toast("✅ Auditoría exportada"); }
+  else { toast("⚠️ No se pudo generar el Excel"); }
 }
 
 /* ====== REPORTES ====== */
@@ -1417,7 +1937,7 @@ function generarHistorial(){
 function historialDesdeVentas(vts){
   const L=[];
   vts.forEach(v=>{ if(v.cancelada) return; (v.items||[]).forEach(i=>{
-    L.push({fecha:v.fecha,vendedor:v.vendedor,provincia:v.provincia||"Otras / s.d.",categoria:i.categoria||"Accesorios",producto:i.nombre,unidades:i.cant,monto:i.precio*i.cant});
+    L.push({fecha:v.fecha,vendedor:v.vendedor,provincia:v.provincia||"Otras / s.d.",estado:v.estado||"",categoria:i.categoria||"Accesorios",producto:i.nombre,unidades:i.cant,monto:i.precio*i.cant});
   }); });
   return L;
 }
@@ -1425,7 +1945,8 @@ const HISTORIAL = HAY_DATOS ? historialDesdeVentas(window.DATOS.ventas) : genera
 function vendedoresRep(){ return [...new Set(HISTORIAL.map(l=>l.vendedor))].sort((a,b)=>(""+a).localeCompare(""+b,'es')); }
 
 /* Estado de la sección Reportes */
-let repTab="productos", repDesde="", repHasta="", repCat="", repVend="", repMetrica="unidades", repMes=null, chartComp=null;
+let repTab="productos", repDesde="", repHasta="", repCat="", repVend="", repProv="", repEstado="", repMetrica="unidades", repMes=null, chartComp=null;
+function provinciasRep(){ return [...new Set(HISTORIAL.map(l=>l.provincia).filter(Boolean))].sort((a,b)=>(""+a).localeCompare(b,'es')); }
 const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_L=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
@@ -1435,6 +1956,8 @@ function filtHist(f){
     if(f.hasta && l.fecha>f.hasta) return false;
     if(f.categoria && l.categoria!==f.categoria) return false;
     if(f.vendedor && l.vendedor!==f.vendedor) return false;
+    if(f.provincia && l.provincia!==f.provincia) return false;
+    if(f.estado && l.estado!==f.estado) return false;
     return true;
   });
 }
@@ -1472,7 +1995,7 @@ function renderRepBody(){
 
 /* --- 1) Productos vendidos --- */
 function htmlRepProductos(){
-  const lineas=filtHist({desde:repDesde,hasta:repHasta,categoria:repCat,vendedor:repVend});
+  const lineas=filtHist({desde:repDesde,hasta:repHasta,categoria:repCat,vendedor:repVend,provincia:repProv,estado:repEstado});
   const esU=repMetrica==="unidades";
   const totU=lineas.reduce((a,l)=>a+l.unidades,0), totM=lineas.reduce((a,l)=>a+l.monto,0);
   const porProd={}; lineas.forEach(l=>{const o=porProd[l.producto]=porProd[l.producto]||{u:0,m:0,cat:l.categoria};o.u+=l.unidades;o.m+=l.monto;});
@@ -1487,12 +2010,15 @@ function htmlRepProductos(){
   return `
     <div class="card">
       <div class="row" style="align-items:end">
-        <div class="field" style="flex:0 0 145px"><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value;renderRepBody()"></div>
-        <div class="field" style="flex:0 0 145px"><label>Hasta</label><input type="date" value="${repHasta}" onchange="repHasta=this.value;renderRepBody()"></div>
+        <div class="field" style="flex:0 0 140px"><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value;renderRepBody()"></div>
+        <div class="field" style="flex:0 0 140px"><label>Hasta</label><input type="date" value="${repHasta}" onchange="repHasta=this.value;renderRepBody()"></div>
+        <div class="field"><label>Provincia</label><select onchange="repProv=this.value;renderRepBody()"><option value="">Todas</option>${provinciasRep().map(p=>`<option ${repProv===p?'selected':''}>${p}</option>`).join("")}</select></div>
         <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${c}</option>`).join("")}</select></div>
         <div class="field"><label>Vendedor</label><select onchange="repVend=this.value;renderRepBody()"><option value="">Todos</option>${vendedoresRep().map(v=>`<option ${repVend===v?'selected':''}>${v}</option>`).join("")}</select></div>
+        <div class="field"><label>Estado</label><select onchange="repEstado=this.value;renderRepBody()"><option value="">Todos</option>${ESTADOS.map(e=>`<option ${repEstado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
       </div>
+      <div class="legend" style="margin-top:10px">Podés combinar todos los filtros: provincia + fecha, provincia + vendedor, fecha + estado, provincia + estado + vendedor, etc.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="chip" onclick="repDesde='${new Date().getFullYear()}-01-01';repHasta=hoyISO();renderRepBody()">Este año</button>
         <button class="chip" onclick="repDesde='2025-01-01';repHasta='2025-12-31';renderRepBody()">2025</button>

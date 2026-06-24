@@ -61,8 +61,11 @@ function generarPDF(v) {
   // Totales al PIE de la hoja (el medio queda en blanco)
   const piezas = (v.items || []).reduce((a, i) => a + Number(i.cant || 0), 0);
   const total = Number(v.total || 0);
+  const iva = Number(v.iva || 0);
+  const factura = v.factura === true;
+  const grand = total + (factura ? iva : 0);
   const saldo = Number(v.saldo || 0);
-  const recibido = total - saldo;
+  const recibido = grand - saldo;
   let y = Math.max(doc.lastAutoTable.finalY + 30, H - 175);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
   doc.text('Total piezas: ' + piezas, W - M, y, { align: 'right' }); y += 10;
@@ -75,8 +78,8 @@ function generarPDF(v) {
     y += 16;
   };
   linea('Subtotal: ARS', montoAR(total));
-  linea('Importe otros tributos: ARS', '0,00');
-  linea('Importe total: ARS', montoAR(total), true);
+  linea((factura ? 'IVA 21%: ARS' : 'Importe otros tributos: ARS'), montoAR(factura ? iva : 0));
+  linea('Importe total: ARS', montoAR(grand), true);
   y += 4;
   linea('Total recibido: ARS', montoAR(recibido));
   linea('Saldo adeudado: ARS', montoAR(saldo), true);
@@ -98,35 +101,51 @@ export default async function handler(req, res) {
     const { data: u, error: ue } = await admin.auth.getUser(token);
     if (ue || !u || !u.user) return res.status(401).json({ error: 'Sesión no válida' });
 
-    const { venta } = req.body || {};
+    const { venta, completo } = req.body || {};
     if (!venta || !venta.email) return res.status(400).json({ error: 'Falta el email del cliente' });
 
     const pdf = generarPDF(venta);
-
-    // Adjuntos del mail: siempre va el remito. Tambien sumamos el manual de usuario.
-    const attachments = [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }];
-    try {
-      const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0];
-      const r = await fetch(`${proto}://${req.headers.host}/manual-usuario-aura.pdf`);
-      if (r.ok) {
-        const manual = Buffer.from(await r.arrayBuffer());
-        attachments.push({ filename: 'Manual de Usuario - Aura Minipiscinas.pdf', content: manual });
-      }
-    } catch (e) { /* Si el manual fallara, el remito se envia igual. */ }
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 465, secure: true,
       auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
     });
+
+    const frases = {
+      'Presupuesto': 'Le acercamos el detalle de su presupuesto.',
+      'Procesando pedido': 'Su orden está siendo preparada.',
+      'En fabricación': 'Su pileta ya está en fabricación.',
+      'Pedido Terminado': '¡Su pedido ya está terminado!',
+      'Entregado al Cliente': '¡Su pedido fue entregado! Muchas gracias por su compra.',
+      'En servicio de Post Venta': 'Su pedido está en servicio de post venta.'
+    };
+    const frase = frases[venta.estado] || 'Su orden está siendo preparada.';
+
+    const subject = completo
+      ? `Aura Minipiscinas — Tu compra (Venta N°${venta.nro})`
+      : `Aura Minipiscinas — Comprobante de tu compra (Venta N°${venta.nro})`;
+
+    const html = completo
+      ? `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:560px">
+          <p style="font-weight:700;font-size:18px">¡Gracias ${venta.cliente || ''}!</p>
+          <p>${frase}</p>
+          <p>Te dejamos adjunto el <b>comprobante</b> con el detalle completo de tu compra (Venta N°${venta.nro}).</p>
+          <p style="color:#2f8aa0;font-weight:600">¡La factura digital colabora con el cuidado del medio ambiente!</p>
+          <p style="font-size:12px;color:#5a6b73">Por favor no respondas este correo. Para contactarte con Aura Minipiscinas usá las vías habituales.</p>
+          <hr style="border:none;border-top:1px solid #e5e7eb">
+          <p style="font-size:13px;color:#2c6fb5">Vendedor: ${venta.vendedor || ''}<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
+        </div>`
+      : `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937">
+          <p style="font-weight:700">¡Gracias ${venta.cliente || ''}!</p>
+          <p>${frase} En el comprobante adjunto encontrás el detalle de tu compra (remito).</p>
+          <p>Ante cualquier consulta, comunicate con Aura Minipiscinas.<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
+        </div>`;
+
     await transporter.sendMail({
       from: `Aura Minipiscinas <${process.env.GMAIL_USER}>`,
       to: venta.email,
-      subject: `Aura Minipiscinas — Comprobante de tu compra (Venta N°${venta.nro})`,
-      html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937">
-        <p style="font-weight:700">¡Gracias ${venta.cliente || ''}!</p>
-        <p>Su orden está siendo preparada. En el comprobante adjunto encontrás el detalle de tu compra (remito) y el manual de usuario de tu minipiscina.</p>
-        <p>Ante cualquier consulta, comunicate con Aura Minipiscinas.<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
-      </div>`,
-      attachments
+      subject,
+      html,
+      attachments: [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }]
     });
     return res.status(200).json({ ok: true });
   } catch (e) {
