@@ -102,6 +102,17 @@ export default async function handler(req, res) {
     if (!venta || !venta.email) return res.status(400).json({ error: 'Falta el email del cliente' });
 
     const pdf = generarPDF(venta);
+
+    // Adjuntos del mail: siempre va el remito. Tambien sumamos el manual de usuario.
+    const attachments = [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }];
+    try {
+      const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0];
+      const r = await fetch(`${proto}://${req.headers.host}/manual-usuario-aura.pdf`);
+      if (r.ok) {
+        const manual = Buffer.from(await r.arrayBuffer());
+        attachments.push({ filename: 'Manual de Usuario - Aura Minipiscinas.pdf', content: manual });
+      }
+    } catch (e) { /* Si el manual fallara, el remito se envia igual. */ }
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 465, secure: true,
       auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
@@ -112,10 +123,10 @@ export default async function handler(req, res) {
       subject: `Aura Minipiscinas — Comprobante de tu compra (Venta N°${venta.nro})`,
       html: `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937">
         <p style="font-weight:700">¡Gracias ${venta.cliente || ''}!</p>
-        <p>Su orden está siendo preparada. En el comprobante adjunto encontrás el detalle de tu compra (remito).</p>
+        <p>Su orden está siendo preparada. En el comprobante adjunto encontrás el detalle de tu compra (remito) y el manual de usuario de tu minipiscina.</p>
         <p>Ante cualquier consulta, comunicate con Aura Minipiscinas.<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
       </div>`,
-      attachments: [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }]
+      attachments
     });
     return res.status(200).json({ ok: true });
   } catch (e) {
