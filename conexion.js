@@ -265,3 +265,44 @@ window.guardarUsuario=async function(i){
     cerrarModal(); viewUsuarios(); toast("✅ Usuario creado");
   }
 };
+
+
+/* ---- Estado en línea (columna Estado): persistir en la base ---- */
+const _cambiarEstadoInline = window.cambiarEstadoInline;
+window.cambiarEstadoInline = function(nro, val){
+  _cambiarEstadoInline(nro, val);
+  const v = VENTAS.find(x=>x.nro===nro);
+  if(v && v.estado===val){ try{ SB.from('ventas').update({estado:val}).eq('id',nro).then(()=>{}); }catch(_){} }
+};
+
+/* ---- Confirmar cobros (lista de trabajo): resincroniza pagos + saldo y manda SOLO el remito si se pidió ---- */
+const _confirmarCobros = window.confirmarCobros;
+window.confirmarCobros = function(nro){
+  const mailEl=$("#cobMail"); const enviar=!!(mailEl && mailEl.checked);
+  _confirmarCobros(nro);   // aplica en memoria + audita + cierra modal + toast
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  (async()=>{
+    try{
+      await SB.from('pagos').delete().eq('venta_id', nro);
+      if(v.pagos && v.pagos.length){
+        const r=await SB.from('pagos').insert(v.pagos.map(p=>({venta_id:nro, monto:p.monto, metodo:p.metodo, fecha:p.fecha, usuario:p.usuario})));
+        if(r.error) throw r.error;
+      }
+      const r2=await SB.from('ventas').update({saldo:v.saldo}).eq('id', nro);
+      if(r2.error) throw r2.error;
+    }catch(ex){ toast("⚠️ Guardado en pantalla, pero error guardando en la base: "+(ex.message||ex)); }
+  })();
+  if(enviar){
+    const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
+    if(!c.mail){ toast("⚠️ El cliente no tiene email cargado"); return; }
+    toast("Enviando comprobante…");
+    const _h=new Date();
+    const fechaRemito=`${String(_h.getDate()).padStart(2,'0')}/${String(_h.getMonth()+1).padStart(2,'0')}/${_h.getFullYear()}`;
+    const localidadRemito=`${c.localidad||''}${c.provincia?` (${c.provincia})`:''}`;
+    SB.auth.getSession().then(({data:{session}})=>{
+      fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+        body:JSON.stringify({tipo:'cobro', soloRemito:true, venta:{nro:v.nro,cliente:v.cliente,dni:c.dni||'',telefono:c.tel||'',localidad:localidadRemito,vendedor:v.vendedor,fecha:fechaRemito,estado:v.estado,total:v.total,iva:v.iva||0,factura:!!v.factura,saldo:v.saldo,email:c.mail,items:(v.items||[]).map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
+      }).then(r=>r.json()).then(j=>{ if(j.ok){ toast("✅ Comprobante enviado a "+c.mail); } else { toast("⚠️ "+(j.error||'No se pudo enviar el comprobante')); } }).catch(()=>toast("⚠️ Error de conexión al enviar el comprobante"));
+    });
+  }
+};

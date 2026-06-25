@@ -113,6 +113,12 @@
   .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
   .search{max-width:280px}
   .acts button{margin-right:4px}
+  .estado-sel{padding:5px 8px;font-size:12px;font-weight:700;border-radius:8px;max-width:175px;width:auto;display:inline-block;background:#fff}
+  .money-input{position:relative;display:flex;align-items:center}
+  .money-input>span{position:absolute;left:9px;font-weight:800;color:#6b7280;pointer-events:none}
+  .money-input>input{width:100%;padding-left:20px}
+  .no-spin{-moz-appearance:textfield;appearance:textfield}
+  .no-spin::-webkit-outer-spin-button,.no-spin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .hint{background:#eaf3ef;border:1px solid #cfe6dc;color:#2c5446;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:16px}
   .empty{text-align:center;color:var(--muted);padding:26px}
   .switch{display:flex;align-items:center;gap:10px;background:#f3f6f5;border:1px solid var(--linea);border-radius:10px;padding:10px 14px}
@@ -1070,7 +1076,11 @@ function renderTablaVentas(){
   }
   tb.innerHTML=rows.length?rows.map(v=>{
     const canc=v.cancelada;
-    const estadoCell = canc ? `<b style="color:var(--rojo)">Cancelada</b>` : estBadge(v.estado);
+    const estadoCell = canc
+      ? `<b style="color:var(--rojo)">Cancelada</b>`
+      : ((esMaestro()||esAdmin())
+          ? `<select class="estado-sel" onchange="cambiarEstadoInline(${v.nro}, this.value)">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}</select>`
+          : estBadge(v.estado));
     const ivaTag = v.factura ? `<br><span class="cont cont-rest">c/IVA</span>` : "";
     return `
     <tr class="${canc?'cancelada':''}">
@@ -1080,7 +1090,7 @@ function renderTablaVentas(){
     <td>${estadoCell}</td><td>${v.vendedor}</td>
     <td class="acts">
       ${(!canc && puede('editar_venta'))?`<button class="btn btn-ghost btn-sm" title="Editar venta" onclick="abrirEditarVenta(${v.nro})">✏️</button>`:''}
-      ${(!canc && puede('cambiar_estado'))?`<button class="btn btn-ghost btn-sm" title="Cambiar estado" onclick="abrirCambiarEstado(${v.nro})">🔄</button>`:''}
+      ${(!canc && (esMaestro()||esAdmin()) && (v.saldo>0 || (v.pagos&&v.pagos.length)))?`<button class="btn btn-ghost btn-sm" title="Cobros / saldo" onclick="cobrarSaldo(${v.nro})">💲</button>`:''}
       ${(!canc && puede('cancelar_venta'))?`<button class="btn btn-ghost btn-sm" title="Cancelar venta" onclick="abrirCancelarVenta(${v.nro})">✖️</button>`:''}
       <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button>
       <button class="btn btn-ghost btn-sm" title="Reenviar comprobante / correo al cliente" onclick="abrirReenviar(${v.nro})">📤</button>
@@ -1146,7 +1156,7 @@ function abrirOrden(nro){
     .brand{font-weight:800;color:#3f6f5e;letter-spacing:.5px}
     @media print{.toolbar{display:none} body{margin:0}}
   </style></head><body>
-    <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button><button class="btn" style="background:#6b7280" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button></div>
+    <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button><button class="btn" style="background:#6b7280" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn" style="background:#2f8f6a" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}</div>
     <div class="brand">AURA MINIPISCINAS</div>
     <h1>Orden de Venta #${v.nro}</h1>
     <div class="sub">Fecha de venta: ${fmtFechaCorta(v.fecha)} &nbsp;·&nbsp; Vendedor: ${v.vendedor} &nbsp;·&nbsp; Estado: <b>${v.estado}</b></div>
@@ -1415,6 +1425,154 @@ function guardarEstadoVenta(nro){
   cerrarModal(); renderTablaVentas(); toast(`✅ Venta #${nro} → ${v.estado}`);
 }
 
+/* ====== ESTADOS (cambio en línea desde la columna, solo Admin/Maestro) ====== */
+function cambiarEstadoInline(nro, val){
+  if(!(esMaestro()||esAdmin())){ toast("Solo Administrador o Maestro pueden cambiar el estado"); return; }
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const previo=v.estado; if(previo===val) return;
+  v.estado=val;
+  auditar("Estado de venta cambiado","venta",nro,`${previo} → ${val}`);
+  renderTablaVentas();
+  toast(`✅ Venta #${nro} → ${val}`);
+}
+
+/* ====== COBROS (misma estructura que Editar venta: agregar a la lista + Confirmar) ====== */
+let cobroWork = [];       // copia de trabajo de los pagos de la venta abierta
+let cobroEditIdx = null;  // índice del pago que se edita en línea
+
+function cobrarSaldo(nro){
+  if(!(esMaestro()||esAdmin())){ toast("Solo Administrador o Maestro pueden gestionar cobros"); return; }
+  const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
+  if(v.cancelada){ toast("La venta está cancelada"); return; }
+  const total=granTotal(v);
+  const cobradoPrevio=Math.max(0, total-Number(v.saldo||0));
+  cobroWork=(v.pagos&&v.pagos.length)
+    ? v.pagos.map(p=>({monto:Number(p.monto||0), metodo:p.metodo||'Efectivo', fecha:p.fecha||v.fecha, usuario:p.usuario||v.vendedor||''}))
+    : (cobradoPrevio>0 ? [{monto:cobradoPrevio, metodo:'Inicial', fecha:v.fecha, usuario:v.vendedor||''}] : []);
+  cobroEditIdx=null;
+  renderCobros(nro);
+}
+
+function cobroSum(){ return cobroWork.reduce((a,p)=>a+Number(p.monto||0),0); }
+
+function renderCobros(nro){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const total=granTotal(v);
+  const c=CLIENTES.find(x=>x.id===v.clienteId)||{}; const mail=c.mail||'';
+  const restante=total-cobroSum();
+  const METODOS=['Efectivo','Transferencia','Tarjeta','Cuenta corriente'];
+
+  let lista;
+  if(!cobroWork.length){
+    lista=`<div class="legend" style="padding:4px 0">Todavía no hay cobros. Agregá uno abajo.</div>`;
+  } else {
+    lista=cobroWork.map((p,i)=>{
+      if(cobroEditIdx===i){
+        const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===i?0:Number(x.monto||0)),0);
+        const maxEdit=Math.max(0,total-sumOtros);
+        return `<div style="display:flex;align-items:center;gap:6px;padding:7px 0;flex-wrap:wrap;border-bottom:1px dashed var(--linea)">
+            <div class="money-input" style="flex:0 0 130px"><span>$</span><input type="number" id="cobEditMonto" class="no-spin" value="${p.monto}" min="0" max="${maxEdit}" oninput="cobroLiveTot(${nro})"></div>
+            <select id="cobEditMetodo" style="flex:1;min-width:130px">${METODOS.map(m=>`<option ${p.metodo===m?'selected':''}>${m}</option>`).join('')}</select>
+            <button class="btn btn-green btn-sm" onclick="cobroSavePago(${nro},${i})">Guardar</button>
+            <button class="btn btn-ghost btn-sm" onclick="cobroCancelEdit(${nro})">Cancelar</button>
+          </div>`;
+      }
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px dashed var(--linea)">
+          <span><b>${money(p.monto)}</b> <span class="legend">· ${p.metodo||'—'}${p.fecha?` · ${fmtFechaCorta(p.fecha)}`:''}</span></span>
+          <span><button class="btn btn-ghost btn-sm" title="Editar este cobro" onclick="cobroEditPago(${nro},${i})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este cobro" onclick="cobroDelPago(${nro},${i})">🗑️</button></span>
+        </div>`;
+    }).join("");
+  }
+
+  const adder = (restante>0 && cobroEditIdx===null)
+    ? `<div class="row" style="align-items:end;margin-top:10px">
+         <div class="field" style="flex:0 0 150px"><label>Agregar pago</label><div class="money-input"><span>$</span><input type="number" id="cobMonto" class="no-spin" value="${restante}" min="0" max="${restante}" placeholder="0"></div></div>
+         <div class="field" style="flex:2"><label>Método</label><select id="cobMetodo">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select></div>
+         <button class="btn btn-green" onclick="cobroAddPago(${nro})">＋ Pago</button>
+       </div>`
+    : (cobroEditIdx===null ? `<div class="help" style="margin-top:8px">La venta queda <b>saldada</b> ($0). Si te equivocaste, editá (✏️) o quitá (🗑️) un cobro.</div>` : '');
+
+  const mailRow = `<div class="switch" style="margin-top:12px"><input type="checkbox" id="cobMail" ${mail?'checked':''} ${mail?'':'disabled'} style="width:auto"><label for="cobMail" style="text-transform:none;font-weight:600;color:#374151">Enviar comprobante (remito) actualizado por mail al cliente${mail?'':' — este cliente no tiene email'}</label></div>`;
+
+  $("#modalRoot").innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+      <div class="modal" style="max-width:500px">
+        <header><h3>💲 Cobros · Venta #${nro}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+        <div class="body">
+          <div class="field"><label>Cliente</label><div style="font-weight:600;padding:2px 0">${v.cliente}</div></div>
+          <h4 style="margin:14px 0 4px;color:#374151">Pagos</h4>
+          <div>${lista}</div>
+          ${adder}
+          ${cobroEditIdx===null?mailRow:''}
+          <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:14px" id="cobTotales"></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+          <button class="btn btn-green" onclick="confirmarCobros(${nro})">✅ Confirmar cobro</button>
+        </div>
+      </div>
+    </div>`;
+  cobroRenderTot(nro);
+}
+
+function cobroTotHTML(total, cobrado){
+  const saldo=total-cobrado;
+  return `<div class="l">Total<b>${money(total)}</b></div>
+    <div class="l">Cobrado<b style="color:var(--ok)">${money(cobrado)}</b></div>
+    <div class="l">Nuevo saldo<b style="color:${saldo<=0?'var(--ok)':'var(--rojo)'}">${money(Math.max(0,saldo))}${saldo<=0?' ✓':''}</b></div>`;
+}
+function cobroRenderTot(nro){
+  const el=$("#cobTotales"); if(!el) return;
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  el.innerHTML=cobroTotHTML(granTotal(v), cobroSum());
+}
+function cobroLiveTot(nro){
+  const el=$("#cobTotales"); if(!el||cobroEditIdx===null) return;
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const total=granTotal(v);
+  const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===cobroEditIdx?0:Number(x.monto||0)),0);
+  let nm=Math.max(0,+($("#cobEditMonto")?.value||0)); nm=Math.min(nm, Math.max(0,total-sumOtros));
+  el.innerHTML=cobroTotHTML(total, sumOtros+nm);
+}
+
+function cobroAddPago(nro){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const restante=granTotal(v)-cobroSum();
+  let monto=Math.max(0, +($("#cobMonto")?.value||0));
+  monto=Math.min(monto, Math.max(0,restante));
+  if(monto<=0){ toast("⚠️ Ingresá un monto mayor a 0"); return; }
+  const metodo=$("#cobMetodo")?.value||'Efectivo';
+  cobroWork.push({monto, metodo, fecha:hoyISO(), usuario:nombreUsuario()});
+  renderCobros(nro);
+}
+function cobroDelPago(nro, idx){ cobroWork.splice(idx,1); cobroEditIdx=null; renderCobros(nro); }
+function cobroEditPago(nro, idx){ cobroEditIdx=idx; renderCobros(nro); }
+function cobroCancelEdit(nro){ cobroEditIdx=null; renderCobros(nro); }
+function cobroSavePago(nro, idx){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  const total=granTotal(v);
+  const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===idx?0:Number(x.monto||0)),0);
+  let nm=Math.max(0,+($("#cobEditMonto")?.value||0)); nm=Math.min(nm, Math.max(0,total-sumOtros));
+  if(nm<=0){ toast("⚠️ El monto debe ser mayor a 0 (o usá 🗑️ para quitarlo)"); return; }
+  cobroWork[idx].monto=nm; cobroWork[idx].metodo=$("#cobEditMetodo")?.value||cobroWork[idx].metodo;
+  cobroEditIdx=null; renderCobros(nro);
+}
+
+function confirmarCobros(nro){
+  if(!(esMaestro()||esAdmin())){ toast("No tenés permiso"); return; }
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
+  if(cobroEditIdx!==null){ toast("⚠️ Terminá de editar el cobro (Guardar o Cancelar) antes de confirmar"); return; }
+  const total=granTotal(v);
+  const cobrado=cobroSum();
+  const saldoPrev=Number(v.saldo||0);
+  v.pagos=cobroWork.map(p=>({monto:Number(p.monto||0), metodo:p.metodo, fecha:p.fecha||hoyISO(), usuario:p.usuario||nombreUsuario()}));
+  v.saldo=Math.max(0, total-cobrado);
+  const detalle=cobroWork.length?cobroWork.map(p=>`${money(p.monto)} (${p.metodo})`).join(', '):'sin cobros';
+  auditar("Cobros actualizados","venta",nro,`saldo ${money(saldoPrev)} → ${money(v.saldo)} · ${detalle}`);
+  cerrarModal(); renderTablaVentas();
+  toast(`✅ Cobros guardados · saldo ${money(v.saldo)}`);
+}
+
 /* ====== EDITAR VENTA (productos, nota, pagos, IVA) ====== */
 let editDraft = null;
 function abrirEditarVenta(nro){
@@ -1428,7 +1586,7 @@ function abrirEditarVenta(nro){
     nota:v.nota||"", factura:!!v.factura,
     cobradoPrevio: granTotal(v)-(+v.saldo||0),
     pagosPrevios:(v.pagos||[]).slice(),
-    nuevosPagos:[]
+    nuevosPagos:[], editPagoIdx:null
   };
   const activos=PRODUCTOS.filter(p=>p.activo!==false);
   $("#modalRoot").innerHTML=`
@@ -1455,7 +1613,7 @@ function abrirEditarVenta(nro){
        <h4 style="margin:16px 0 6px;color:#374151">Pagos</h4>
        <div id="edPagos"></div>
        <div class="row" style="align-items:end;margin-top:8px">
-         <div class="field" style="flex:0 0 150px"><label>Agregar pago</label><input type="number" id="edPagoMonto" placeholder="0" min="0"></div>
+         <div class="field" style="flex:0 0 150px"><label>Agregar pago</label><div class="money-input"><span>$</span><input type="number" id="edPagoMonto" class="no-spin" placeholder="0" min="0"></div></div>
          <div class="field" style="flex:2"><label>Método</label><select id="edPagoMetodo"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option><option>Cuenta corriente</option></select></div>
          <button class="btn btn-ghost" onclick="editAddPago()">＋ Pago</button>
        </div>
@@ -1511,13 +1669,34 @@ function editAddPago(){
   editDraft.nuevosPagos.push({monto,metodo:$("#edPagoMetodo").value,fecha:hoyISO(),usuario:nombreUsuario()});
   $("#edPagoMonto").value=""; editRenderPagos(); editRenderTotales();
 }
-function editDelNuevoPago(idx){ editDraft.nuevosPagos.splice(idx,1); editRenderPagos(); editRenderTotales(); }
+function editDelNuevoPago(idx){ editDraft.nuevosPagos.splice(idx,1); editDraft.editPagoIdx=null; editRenderPagos(); editRenderTotales(); }
+function editEditNuevoPago(idx){ editDraft.editPagoIdx=idx; editRenderPagos(); }
+function editCancelNuevoPago(){ editDraft.editPagoIdx=null; editRenderPagos(); }
+function editSaveNuevoPago(idx){
+  const m=+($("#edPagoEditMonto")?.value)||0;
+  if(m<=0){ toast("⚠️ Ingresá un monto mayor a 0 (o usá 🗑️ para quitarlo)"); return; }
+  editDraft.nuevosPagos[idx].monto=m;
+  editDraft.nuevosPagos[idx].metodo=$("#edPagoEditMetodo").value;
+  editDraft.editPagoIdx=null;
+  editRenderPagos(); editRenderTotales();
+}
 function editRenderPagos(){
   const c=$("#edPagos"); if(!c) return;
   const prev=editDraft.pagosPrevios.length
     ? editDraft.pagosPrevios.map(p=>`<div class="l" style="padding:5px 0"><span>${fmtFechaCorta(p.fecha)} · ${p.metodo||'Pago'}</span><b>${money(p.monto)}</b></div>`).join("")
     : `<div class="l" style="padding:5px 0"><span>Cobrado inicial</span><b>${money(editDraft.cobradoPrevio)}</b></div>`;
-  const nuevos=editDraft.nuevosPagos.map((p,idx)=>`<div class="l" style="padding:5px 0;color:var(--ok)"><span>＋ ${p.metodo} (nuevo)</span><span><b>${money(p.monto)}</b> <button class="btn btn-ghost btn-sm" onclick="editDelNuevoPago(${idx})">🗑️</button></span></div>`).join("");
+  const METP=['Efectivo','Transferencia','Tarjeta','Cuenta corriente'];
+  const nuevos=editDraft.nuevosPagos.map((p,idx)=>{
+    if(editDraft.editPagoIdx===idx){
+      return `<div style="display:flex;align-items:center;gap:6px;padding:7px 0;flex-wrap:wrap">
+        <div class="money-input" style="flex:0 0 130px"><span>$</span><input type="number" id="edPagoEditMonto" class="no-spin" value="${p.monto}" min="0"></div>
+        <select id="edPagoEditMetodo" style="flex:1;min-width:130px">${METP.map(m=>`<option ${p.metodo===m?'selected':''}>${m}</option>`).join('')}</select>
+        <button class="btn btn-green btn-sm" onclick="editSaveNuevoPago(${idx})">Guardar</button>
+        <button class="btn btn-ghost btn-sm" onclick="editCancelNuevoPago()">Cancelar</button>
+      </div>`;
+    }
+    return `<div class="l" style="padding:5px 0;color:var(--ok)"><span>＋ ${p.metodo} (nuevo)</span><span><b>${money(p.monto)}</b> <button class="btn btn-ghost btn-sm" title="Editar este pago" onclick="editEditNuevoPago(${idx})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este pago" onclick="editDelNuevoPago(${idx})">🗑️</button></span></div>`;
+  }).join("");
   c.innerHTML=prev+nuevos;
 }
 function editRenderTotales(){

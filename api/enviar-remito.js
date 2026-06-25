@@ -102,8 +102,16 @@ function generarPDF(v) {
 /* ====== CORREO (copy del equipo de Aura) ====== */
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-function emailHTML(v) {
+function emailHTML(v, tipo) {
   const nombre = esc((String(v.cliente || '').trim().split(' ')[0]) || 'cliente');
+  const saldo = Number(v.saldo || 0);
+  const P1 = 'style="font-size:16px;line-height:1.7;color:#33403b;margin:0 0 16px"';
+  const P2 = 'style="font-size:16px;line-height:1.7;color:#33403b;margin:0"';
+  const mensaje = tipo === 'cobro'
+    ? (saldo <= 0
+        ? `<p ${P1}>Registramos tu pago. <b>¡Tu cuenta quedó saldada, muchas gracias!</b></p><p ${P2}>Te adjuntamos el comprobante actualizado.</p>`
+        : `<p ${P1}>Registramos tu pago. Te adjuntamos el comprobante actualizado.</p><p ${P2}>Saldo pendiente: <b>$ ${montoAR(saldo)}</b>.</p>`)
+    : `<p ${P1}>Tu orden ya está siendo preparada con todo el cuidado que se merece. En el remito adjunto encontrás el detalle completo de tu compra.</p><p ${P2}>Cuando esté lista, te avisamos. 😊</p>`;
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>@media (max-width:480px){.aura-pad{padding-left:24px!important;padding-right:24px!important}}</style></head>
 <body style="margin:0;padding:0;background:#eef2f1;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
@@ -118,8 +126,7 @@ function emailHTML(v) {
       <div style="font-size:23px;font-weight:800;color:#2b5347">¡Hola, ${nombre}!</div>
     </td></tr>
     <tr><td class="aura-pad" style="padding:28px 40px 6px">
-      <p style="font-size:16px;line-height:1.7;color:#33403b;margin:0 0 16px">Tu orden ya está siendo preparada con todo el cuidado que se merece. En el remito adjunto encontrás el detalle completo de tu compra.</p>
-      <p style="font-size:16px;line-height:1.7;color:#33403b;margin:0">Cuando esté lista, te avisamos. 😊</p>
+      ${mensaje}
     </td></tr>
     <tr><td class="aura-pad" style="padding:24px 40px 6px">
       <p style="font-size:15px;line-height:1.6;color:#33403b;margin:0 0 14px">¿Alguna consulta? Escribinos, estamos acá para ayudarte:</p>
@@ -156,21 +163,23 @@ export default async function handler(req, res) {
     const { data: u, error: ue } = await admin.auth.getUser(token);
     if (ue || !u || !u.user) return res.status(401).json({ error: 'Sesión no válida' });
 
-    const { venta } = req.body || {};
+    const { venta, soloRemito, tipo } = req.body || {};
     if (!venta || !venta.email) return res.status(400).json({ error: 'Falta el email del cliente' });
 
     // Adjunto 1: remito generado
     const pdf = generarPDF(venta);
     const attachments = [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }];
 
-    // Adjunto 2: manual de usuario (uno para todos), tomado del sitio
-    try {
-      const r = await fetch(MANUAL_URL);
-      if (r.ok) {
-        const ab = await r.arrayBuffer();
-        attachments.push({ filename: 'Manual_de_usuario_Aura.pdf', content: Buffer.from(ab) });
-      }
-    } catch (e) { /* si el manual no carga, igual mandamos el remito */ }
+    // Adjunto 2: manual de usuario — solo en la venta nueva, NO cuando es un cobro de saldo
+    if (!soloRemito) {
+      try {
+        const r = await fetch(MANUAL_URL);
+        if (r.ok) {
+          const ab = await r.arrayBuffer();
+          attachments.push({ filename: 'Manual_de_usuario_Aura.pdf', content: Buffer.from(ab) });
+        }
+      } catch (e) { /* si el manual no carga, igual mandamos el remito */ }
+    }
 
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 465, secure: true,
@@ -180,8 +189,8 @@ export default async function handler(req, res) {
     await transporter.sendMail({
       from: `Aura Minipiscinas <${process.env.GMAIL_USER}>`,
       to: venta.email,
-      subject: `Aura Minipiscinas · Tu compra (Venta N°${venta.nro})`,
-      html: emailHTML(venta),
+      subject: tipo === 'cobro' ? `Aura Minipiscinas · Comprobante de tu pago (Venta N°${venta.nro})` : `Aura Minipiscinas · Tu compra (Venta N°${venta.nro})`,
+      html: emailHTML(venta, tipo),
       attachments
     });
     return res.status(200).json({ ok: true });
