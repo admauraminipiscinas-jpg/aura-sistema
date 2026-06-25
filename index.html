@@ -58,6 +58,7 @@
   input.err,select.err{border-color:var(--rojo);box-shadow:0 0 0 3px #dc262620}
   .btn{border:none;border-radius:10px;padding:11px 18px;font-size:15px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
   .btn-green{background:var(--verde);color:#fff}.btn-green:hover{background:var(--verde2)}
+  .btn-greenlight{background:#5a917d;color:#fff}.btn-greenlight:hover{background:#4e8270}
   .btn-blue{background:var(--azul);color:#fff}.btn-blue:hover{background:var(--azul-d)}
   .btn-amber{background:var(--amar);color:#3a2d00}
   .btn-ghost{background:#fff;border:1px solid var(--linea);color:#374151}
@@ -327,6 +328,7 @@ const PERMISOS_DEFAULT = {
 let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
 const IVA_PCT = 0.21;
+const SENA_VENDEDOR = 150000; // Seña fija que cobran los vendedores (campo bloqueado para el rol Vendedor)
 function nombreUsuario(){ return `${USUARIO_ACTUAL.nombre} ${USUARIO_ACTUAL.ap}`; }
 function esVendedor(){ return USUARIO_ACTUAL.rol==="Vendedor"; }
 function esAdmin(){ return USUARIO_ACTUAL.rol==="Administrador"; }
@@ -446,7 +448,6 @@ function viewVender(){
   ventaFactura = false;
   $("#main").innerHTML = `
     <h1 class="page">Nueva Venta</h1>
-    <div class="hint">💡 Versión simplificada para el vendedor: cargá el cliente, sumá productos y listo. El vendedor y la fecha se completan solos.</div>
     <div class="grid2">
       <div>
         <div class="card">
@@ -457,7 +458,7 @@ function viewVender(){
           <div id="clienteBox"></div>
           <div class="row" style="margin-top:14px">
             <div class="field" style="flex:0 0 220px">
-              <label>Entrega estimada</label>
+              <label style="color:#111827;font-weight:800">Entrega estimada</label>
               <input type="date" id="vEntrega">
             </div>
           </div>
@@ -484,7 +485,7 @@ function viewVender(){
               <label>Cant.</label>
               <input type="number" id="vCant" value="1" min="1">
             </div>
-            <button class="btn btn-green" onclick="addItem()">＋ Agregar</button>
+            <button class="btn btn-greenlight btn-sm" onclick="addItem()">＋ Agregar</button>
           </div>
           <div class="table-wrap">
           <table style="margin-top:14px">
@@ -503,7 +504,7 @@ function viewVender(){
             </div>
             <div class="field">
               <label>Monto cobrado ahora</label>
-              <input type="number" id="vCobro" value="0" oninput="recalc()">
+              ${esVendedor() ? `<input type="number" id="vCobro" value="${SENA_VENDEDOR}" readonly title="Seña fija de vendedores" style="background:#eef2f1;color:#52605b;cursor:not-allowed;font-weight:700"><small class="legend" style="display:block;margin-top:5px">🔒 Seña fija de ${money(SENA_VENDEDOR)} — no editable</small>` : `<input type="number" id="vCobro" value="0" oninput="recalc()">`}
             </div>
           </div>
           <div class="switch" style="margin-top:14px">
@@ -531,7 +532,7 @@ function viewVender(){
         <div class="l" id="sGranRow" style="display:none">Total c/IVA <b id="sGran" class="red">$ 0</b></div>
         <div class="l">Cobrado <b id="sCobrado" class="green">$ 0</b></div>
         <div class="l">Saldo <b id="sSaldo" class="red">$ 0</b></div>
-        <button class="btn btn-green" style="width:100%;margin-top:16px;justify-content:center;font-size:17px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
+        <button class="btn btn-greenlight" style="width:100%;margin-top:16px;justify-content:center;font-size:15px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
         <button class="btn btn-amber" style="width:100%;margin-top:10px;justify-content:center" onclick="toast('Presupuesto guardado (demo)')">📄 Solo presupuestar</button>
       </div>
     </div>`;
@@ -546,7 +547,7 @@ function renderClienteBox(){
     box.innerHTML = `
       <div class="cli-empty">
         <span class="legend">Cargá los datos del comprador para poder vender. El remito se enviará al correo que indiques.</span>
-        <button class="btn btn-green" onclick="abrirModalCliente('venta')">＋ Cargar cliente</button>
+        <button class="btn btn-greenlight btn-sm" onclick="abrirModalCliente('venta')">＋ Cargar cliente</button>
       </div>`;
     return;
   }
@@ -813,10 +814,9 @@ function viewRanking(){
   });
   let lista=Object.values(acc).filter(x=>x.anio>0);
   lista.sort((a,b)=> (b.mes-a.mes) || (b.anio-a.anio) || a.nombre.localeCompare(b.nombre,'es'));
-  const medallas=["🥇","🥈","🥉"];
   const filas = lista.map((x,i)=>`
-      <tr class="${i===0?'lb-row-1':(i===1?'lb-row-2':'')}">
-        <td style="font-weight:800;white-space:nowrap">${i<3?medallas[i]+' ':''}${i+1}°</td>
+      <tr>
+        <td style="color:var(--muted);white-space:nowrap">${i+1}</td>
         <td>${x.nombre}</td>
         <td style="font-weight:800;font-size:15px">${x.mes}</td>
         <td style="color:var(--muted)">${x.anio}</td>
@@ -829,7 +829,7 @@ function viewRanking(){
         <div class="toolbar"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:16px">Ventas por vendedor</b><span class="legend">${meses[cm]} ${cy} · ordenado por ventas del mes</span></div></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Puesto</th><th>Vendedor</th><th>Ventas del mes</th><th>Acumulado ${cy}</th></tr></thead>
+            <thead><tr><th>N°</th><th>Vendedor</th><th>Ventas del mes</th><th>Acumulado ${cy}</th></tr></thead>
             <tbody>${filas}</tbody>
           </table>
         </div>
