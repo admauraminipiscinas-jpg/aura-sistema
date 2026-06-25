@@ -1,10 +1,16 @@
-/* Función de servidor (Vercel) — Envía el remito por mail automáticamente.
-   Genera el PDF y lo manda desde tu Gmail (Gmail SMTP con contraseña de app).
+/* Función de servidor (Vercel) — Envía al cliente el correo de su compra.
+   Adjunta DOS PDF: el remito (que se genera acá) y el manual de usuario
+   (uno para todos, tomado del propio sitio). El correo tiene diseño
+   aspiracional: header de marca, hero con el estado, detalle de la orden,
+   timeline de seguimiento y los canales de contacto.
    Claves: GMAIL_USER, GMAIL_APP_PASSWORD (viven solo en el servidor). */
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+
+// El manual se sube al repo (raíz) y se sirve en esta URL. Si cambia el dominio, actualizar acá.
+const MANUAL_URL = 'https://aura-sistema-sigma.vercel.app/manual-usuario-aura.pdf';
 
 const montoAR = n => Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -36,7 +42,7 @@ function generarPDF(v) {
   doc.setFontSize(9); doc.text('Vendedor: ' + (v.vendedor || ''), W - M - 12, top + 38, { align: 'right' });
   doc.setFont('helvetica', 'normal'); doc.text('Fecha de emisión: ' + (v.fecha || ''), W - M - 12, top + 52, { align: 'right' });
 
-  // Datos del cliente (DNI, Localidad, Apellido y Nombre, Teléfono)
+  // Datos del cliente
   let cy = top + 66; doc.setLineWidth(1); doc.rect(M, cy, W - 2 * M, 54);
   doc.setFontSize(9); doc.setTextColor(0);
   kv(M + 10, cy + 16, 'DNI:', v.dni);
@@ -58,7 +64,7 @@ function generarPDF(v) {
     margin: { left: M, right: M }, theme: 'grid'
   });
 
-  // Totales al PIE de la hoja (el medio queda en blanco)
+  // Totales al pie
   const piezas = (v.items || []).reduce((a, i) => a + Number(i.cant || 0), 0);
   const total = Number(v.total || 0);
   const iva = Number(v.iva || 0);
@@ -93,6 +99,55 @@ function generarPDF(v) {
   return Buffer.from(doc.output('arraybuffer'));
 }
 
+/* ====== CORREO (copy del equipo de Aura) ====== */
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function emailHTML(v) {
+  const nombre = esc((String(v.cliente || '').trim().split(' ')[0]) || 'cliente');
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>@media (max-width:480px){.aura-pad{padding-left:24px!important;padding-right:24px!important}}</style></head>
+<body style="margin:0;padding:0;background:#eef2f1;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f1;padding:26px 12px">
+<tr><td align="center">
+  <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:18px;overflow:hidden">
+    <tr><td class="aura-pad" style="padding:30px 40px 22px;text-align:center;border-bottom:1px solid #f0f3f2">
+      <div style="font-size:30px;font-weight:700;letter-spacing:10px;color:#3f6f5e;font-family:Georgia,'Times New Roman',serif">AURA</div>
+      <div style="font-size:10px;letter-spacing:6px;color:#9aa6a1;margin-top:4px">M I N I P I S C I N A S</div>
+    </td></tr>
+    <tr><td style="background:linear-gradient(135deg,#e9f5f2 0%,#dbefe9 100%);padding:30px 40px;text-align:center">
+      <div style="font-size:23px;font-weight:800;color:#2b5347">¡Hola, ${nombre}!</div>
+    </td></tr>
+    <tr><td class="aura-pad" style="padding:28px 40px 6px">
+      <p style="font-size:16px;line-height:1.7;color:#33403b;margin:0 0 16px">Tu orden ya está siendo preparada con todo el cuidado que se merece. En el remito adjunto encontrás el detalle completo de tu compra.</p>
+      <p style="font-size:16px;line-height:1.7;color:#33403b;margin:0">Cuando esté lista, te avisamos. 😊</p>
+    </td></tr>
+    <tr><td class="aura-pad" style="padding:24px 40px 6px">
+      <p style="font-size:15px;line-height:1.6;color:#33403b;margin:0 0 14px">¿Alguna consulta? Escribinos, estamos acá para ayudarte:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7faf9;border:1px solid #e8efec;border-radius:14px">
+        <tr><td style="padding:16px 20px">
+          <div style="font-size:14px;line-height:2.2;color:#33403b">
+            <span style="display:inline-block;width:26px">📧</span><a href="mailto:adm.auraminipiscinas@gmail.com" style="color:#3f6f5e;text-decoration:none">adm.auraminipiscinas@gmail.com</a><br>
+            <span style="display:inline-block;width:26px">📸</span><a href="https://instagram.com/Aura.minipiscinas" style="color:#3f6f5e;text-decoration:none">@Aura.minipiscinas</a><br>
+            <span style="display:inline-block;width:26px">🌐</span><a href="https://www.minipiscinasaura.com" style="color:#3f6f5e;text-decoration:none">www.minipiscinasaura.com</a>
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+    <tr><td class="aura-pad" style="padding:26px 40px 8px;text-align:center">
+      <p style="font-size:15.5px;line-height:1.6;color:#2b5347;font-weight:700;margin:0">Gracias por elegirnos. ¡Hasta pronto!</p>
+      <p style="font-size:14px;color:#7c8a85;margin:6px 0 0">El equipo de Aura</p>
+    </td></tr>
+    <tr><td style="padding:20px 40px 28px;text-align:center;border-top:1px solid #f0f3f2">
+      ${v.vendedor ? `<div style="font-size:11.5px;color:#9aa6a1;line-height:1.6">Te atendió: ${esc(v.vendedor)}</div>` : ''}
+      <div style="font-size:11px;color:#c4ccc9;margin-top:8px">Este es un correo automático; para cualquier consulta usá los canales de arriba.</div>
+    </td></tr>
+  </table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
   try {
@@ -101,51 +156,33 @@ export default async function handler(req, res) {
     const { data: u, error: ue } = await admin.auth.getUser(token);
     if (ue || !u || !u.user) return res.status(401).json({ error: 'Sesión no válida' });
 
-    const { venta, completo } = req.body || {};
+    const { venta } = req.body || {};
     if (!venta || !venta.email) return res.status(400).json({ error: 'Falta el email del cliente' });
 
+    // Adjunto 1: remito generado
     const pdf = generarPDF(venta);
+    const attachments = [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }];
+
+    // Adjunto 2: manual de usuario (uno para todos), tomado del sitio
+    try {
+      const r = await fetch(MANUAL_URL);
+      if (r.ok) {
+        const ab = await r.arrayBuffer();
+        attachments.push({ filename: 'Manual_de_usuario_Aura.pdf', content: Buffer.from(ab) });
+      }
+    } catch (e) { /* si el manual no carga, igual mandamos el remito */ }
+
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com', port: 465, secure: true,
       auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
     });
 
-    const frases = {
-      'Presupuesto': 'Le acercamos el detalle de su presupuesto.',
-      'Procesando pedido': 'Su orden está siendo preparada.',
-      'En fabricación': 'Su pileta ya está en fabricación.',
-      'Pedido Terminado': '¡Su pedido ya está terminado!',
-      'Entregado al Cliente': '¡Su pedido fue entregado! Muchas gracias por su compra.',
-      'En servicio de Post Venta': 'Su pedido está en servicio de post venta.'
-    };
-    const frase = frases[venta.estado] || 'Su orden está siendo preparada.';
-
-    const subject = completo
-      ? `Aura Minipiscinas — Tu compra (Venta N°${venta.nro})`
-      : `Aura Minipiscinas — Comprobante de tu compra (Venta N°${venta.nro})`;
-
-    const html = completo
-      ? `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:560px">
-          <p style="font-weight:700;font-size:18px">¡Gracias ${venta.cliente || ''}!</p>
-          <p>${frase}</p>
-          <p>Te dejamos adjunto el <b>comprobante</b> con el detalle completo de tu compra (Venta N°${venta.nro}).</p>
-          <p style="color:#2f8aa0;font-weight:600">¡La factura digital colabora con el cuidado del medio ambiente!</p>
-          <p style="font-size:12px;color:#5a6b73">Por favor no respondas este correo. Para contactarte con Aura Minipiscinas usá las vías habituales.</p>
-          <hr style="border:none;border-top:1px solid #e5e7eb">
-          <p style="font-size:13px;color:#2c6fb5">Vendedor: ${venta.vendedor || ''}<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
-        </div>`
-      : `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937">
-          <p style="font-weight:700">¡Gracias ${venta.cliente || ''}!</p>
-          <p>${frase} En el comprobante adjunto encontrás el detalle de tu compra (remito).</p>
-          <p>Ante cualquier consulta, comunicate con Aura Minipiscinas.<br>Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas</p>
-        </div>`;
-
     await transporter.sendMail({
       from: `Aura Minipiscinas <${process.env.GMAIL_USER}>`,
       to: venta.email,
-      subject,
-      html,
-      attachments: [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }]
+      subject: `Aura Minipiscinas · Tu compra (Venta N°${venta.nro})`,
+      html: emailHTML(venta),
+      attachments
     });
     return res.status(200).json({ ok: true });
   } catch (e) {
