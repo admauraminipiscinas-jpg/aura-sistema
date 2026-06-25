@@ -93,6 +93,10 @@ window.salir = async function(){
 window.confirmarVenta = async function(){
   if(!clienteActual){ toast("⚠️ Cargá el cliente primero"); return; }
   if(!carrito.length){ toast("⚠️ Agregá al menos un producto"); return; }
+  const _minEnt=fechaMasDias(7);
+  const _entrega=($("#vEntrega")?.value||"").trim();
+  if(!_entrega){ toast("⚠️ Falta la fecha de entrega (es obligatoria)"); $("#vEntrega")?.focus(); return; }
+  if(_entrega < _minEnt){ toast("⚠️ La entrega debe ser como mínimo 7 días desde hoy (a partir del "+fmtFechaCorta(_minEnt)+")"); $("#vEntrega")?.focus(); return; }
   const c=clienteActual;
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;

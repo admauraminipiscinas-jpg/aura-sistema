@@ -452,6 +452,7 @@ function viewVender(){
   carrito = [];
   clienteActual = null;
   ventaFactura = false;
+  const minEnt = fechaMasDias(7);
   $("#main").innerHTML = `
     <h1 class="page">Nueva Venta</h1>
     <div class="grid2">
@@ -464,8 +465,8 @@ function viewVender(){
           <div id="clienteBox"></div>
           <div class="row" style="margin-top:14px">
             <div class="field" style="flex:0 0 220px">
-              <label style="color:#111827;font-weight:800">Entrega estimada</label>
-              <input type="date" id="vEntrega">
+              <label style="color:#111827;font-weight:800">Entrega estimada <span class="req">*</span></label>
+              <input type="date" id="vEntrega" min="${minEnt}" required>
             </div>
           </div>
         </div>
@@ -734,6 +735,10 @@ function recalc(){
 function confirmarVenta(){
   if(!clienteActual){toast("⚠️ Cargá el cliente primero");return;}
   if(!carrito.length){toast("⚠️ Agregá al menos un producto");return;}
+  const _minEnt=fechaMasDias(7);
+  const _entrega=($("#vEntrega")?.value||"").trim();
+  if(!_entrega){ toast("⚠️ Falta la fecha de entrega (es obligatoria)"); $("#vEntrega")?.focus(); return; }
+  if(_entrega < _minEnt){ toast("⚠️ La entrega debe ser como mínimo 7 días desde hoy (a partir del "+fmtFechaCorta(_minEnt)+")"); $("#vEntrega")?.focus(); return; }
   const c=clienteActual;
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
@@ -778,6 +783,7 @@ function thSort(label,key){
 /* Helpers de fecha */
 function ymdLocal(dt){return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;}
 function hoyISO(){return ymdLocal(new Date());}
+function fechaMasDias(n){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+(+n||0)); return ymdLocal(d); }
 function isoMenosDias(n){const d=new Date();d.setDate(d.getDate()-n);return ymdLocal(d);}
 function fmtFechaCorta(iso){if(!iso)return "—";const p=iso.split("-");return `${p[2]}/${p[1]}/${p[0]}`;}
 function diffDias(iso){ if(!iso) return null; const a=new Date(hoyISO()+"T00:00:00"), b=new Date(iso+"T00:00:00"); return Math.round((b-a)/86400000); }
