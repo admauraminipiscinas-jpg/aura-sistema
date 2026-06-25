@@ -104,7 +104,7 @@ window.confirmarVenta = async function(){
   const remito=$("#vRemito").checked;
   const {data,error}=await SB.from('ventas').insert({
     cliente_id:c.id, cliente_nombre:`${c.nombre} ${c.apellido}`, vendedor:nombreUsuario(),
-    fecha:new Date().toISOString().slice(0,10), entrega, total, iva, factura:ventaFactura, saldo:gran-cobrado,
+    fecha:hoyISO(), entrega, total, iva, factura:ventaFactura, saldo:gran-cobrado,
     estado:"Procesando pedido", provincia:c.provincia, localidad:`${c.localidad} (${c.provincia})`, nota
   }).select().single();
   if(error){ toast("⚠️ Error al guardar la venta: "+error.message); return; }
