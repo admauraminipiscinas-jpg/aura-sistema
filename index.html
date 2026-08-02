@@ -459,6 +459,29 @@ function viewVender(){
     <h1 class="page">Nueva Venta</h1>
     <div class="grid2">
       <div>
+        ${esMaestro()?`
+        <div class="card" style="border:1px solid var(--verde)">
+          <div class="toolbar" style="margin-bottom:8px">
+            <h3>📅 Fecha y vendedor</h3>
+            <span class="legend">Solo Maestro</span>
+          </div>
+          <div class="help" style="margin-top:0">Para volcar ventas del sistema anterior. Si es una venta de hoy, dejá los campos como vienen.</div>
+          <div class="row" style="margin-top:12px">
+            <div class="field" style="flex:0 0 190px">
+              <label>Fecha de la venta</label>
+              <input type="date" id="vFechaVenta" value="${hoyISO()}" max="${hoyISO()}" onchange="ajustarCargaHistorica()">
+            </div>
+            <div class="field" style="min-width:0">
+              <label>Vendedor</label>
+              <select id="vVendedor" onchange="toggleVendedorOtro()">${opcionesVendedor()}<option value="__otro__">Otro (escribir el nombre)…</option></select>
+            </div>
+            <div class="field" id="vVendedorOtroWrap" style="display:none;min-width:0">
+              <label>Nombre del vendedor <span class="req">*</span></label>
+              <input id="vVendedorOtro" placeholder="Nombre y apellido">
+            </div>
+          </div>
+          <div id="vHistAviso" class="help" style="display:none;background:#fff4d6;border-color:#f5d78e;color:#946c00;margin-top:10px"></div>
+        </div>`:''}
         <div class="card">
           <div class="toolbar" style="margin-bottom:10px">
             <h3>Cliente</h3>
@@ -546,6 +569,67 @@ function viewVender(){
     </div>`;
   renderClienteBox();
   renderItems();
+  if(esMaestro()) ajustarCargaHistorica();
+}
+
+/* ====== CARGA HISTÓRICA (solo Maestro) ======
+   Sirve para volcar las ventas del sistema anterior con su fecha real y el
+   vendedor que las hizo. El vendedor común no ve nada de esto: para él la
+   venta siempre es de hoy y a su nombre. */
+
+/* Nombres para elegir: los usuarios del sistema + los vendedores que ya
+   figuran en ventas cargadas (así no se escribe distinto el mismo nombre). */
+function opcionesVendedor(){
+  const yo = nombreUsuario();
+  const nombres = [...new Set(
+    USUARIOS.map(u=>`${u.nombre||''} ${u.ap||''}`.trim())
+      .concat(VENTAS.map(v=>v.vendedor||''))
+      .concat([yo])
+      .filter(Boolean)
+  )].sort((a,b)=>a.localeCompare(b,'es'));
+  return nombres.map(n=>`<option ${n===yo?'selected':''}>${esc(n)}</option>`).join("");
+}
+function toggleVendedorOtro(){
+  const wrap=$("#vVendedorOtroWrap"); if(!wrap) return;
+  const otro = $("#vVendedor").value==="__otro__";
+  wrap.style.display = otro ? "" : "none";
+  if(otro) setTimeout(()=>{ const i=$("#vVendedorOtro"); if(i) i.focus(); },30);
+}
+/* Al fechar la venta en el pasado: la entrega puede ser anterior a hoy y no se
+   le manda el remito al cliente (es una compra vieja, no le va a servir). */
+function ajustarCargaHistorica(){
+  const f = $("#vFechaVenta")?.value || hoyISO();
+  const historica = f < hoyISO();
+  const ent=$("#vEntrega"); if(ent) ent.min = historica ? f : fechaMasDias(7);
+  const rem=$("#vRemito"); if(rem && historica && rem.checked) rem.checked=false;
+  const aviso=$("#vHistAviso"); if(!aviso) return;
+  if(historica){
+    aviso.style.display="";
+    aviso.innerHTML=`Carga histórica: la venta queda con fecha <b>${fmtFechaCorta(f)}</b>. <b>No se le envía el remito al cliente</b> (si querés enviarlo igual, tildá la casilla más abajo) y la entrega puede ser anterior a hoy.`;
+  } else {
+    aviso.style.display="none";
+  }
+}
+/* Fecha y vendedor con los que se guarda la venta. */
+function datosCargaHistorica(){
+  if(!esMaestro()) return {fecha:hoyISO(), vendedor:nombreUsuario(), historica:false};
+  const fecha = ($("#vFechaVenta")?.value||"").trim() || hoyISO();
+  let vendedor = ($("#vVendedor")?.value||"").trim();
+  if(vendedor==="__otro__") vendedor = ($("#vVendedorOtro")?.value||"").trim();
+  if(!vendedor) vendedor = nombreUsuario();
+  return {fecha, vendedor, historica: fecha < hoyISO()};
+}
+/* Validación común de la entrega. Devuelve null si está bien, o el error. */
+function validarEntrega(carga){
+  const entrega=($("#vEntrega")?.value||"").trim();
+  if(!entrega) return "⚠️ Falta la fecha de entrega (es obligatoria)";
+  if(carga.historica){
+    if(entrega < carga.fecha) return "⚠️ La entrega no puede ser anterior a la fecha de la venta";
+    return null;
+  }
+  const min=fechaMasDias(7);
+  if(entrega < min) return "⚠️ La entrega debe ser como mínimo 7 días desde hoy (a partir del "+fmtFechaCorta(min)+")";
+  return null;
 }
 
 /* ====== CLIENTE (carga obligatoria, todos nuevos) ====== */
@@ -736,10 +820,12 @@ function recalc(){
 function confirmarVenta(){
   if(!clienteActual){toast("⚠️ Cargá el cliente primero");return;}
   if(!carrito.length){toast("⚠️ Agregá al menos un producto");return;}
-  const _minEnt=fechaMasDias(7);
-  const _entrega=($("#vEntrega")?.value||"").trim();
-  if(!_entrega){ toast("⚠️ Falta la fecha de entrega (es obligatoria)"); $("#vEntrega")?.focus(); return; }
-  if(_entrega < _minEnt){ toast("⚠️ La entrega debe ser como mínimo 7 días desde hoy (a partir del "+fmtFechaCorta(_minEnt)+")"); $("#vEntrega")?.focus(); return; }
+  const carga=datosCargaHistorica();
+  const errEnt=validarEntrega(carga);
+  if(errEnt){ toast(errEnt); $("#vEntrega")?.focus(); return; }
+  if(esMaestro() && $("#vVendedor")?.value==="__otro__" && !($("#vVendedorOtro")?.value||"").trim()){
+    toast("⚠️ Escribí el nombre del vendedor"); $("#vVendedorOtro")?.focus(); return;
+  }
   const c=clienteActual;
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
@@ -747,10 +833,10 @@ function confirmarVenta(){
   const cobrado=Math.max(0, Math.min(gran, +$("#vCobro").value||0));
   const metodo=($("#vPago")?.value||"Efectivo");
   const nro=Math.max(0,...VENTAS.map(v=>v.nro))+1;
-  const pagos=cobrado>0?[{monto:cobrado,metodo,fecha:hoyISO(),usuario:nombreUsuario()}]:[];
-  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:hoyISO(),entrega:($("#vEntrega")?.value||""),clienteId:c.id,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant})),pagos,nota:($("#vNota")?.value||"").trim()});
-  descontarStockVenta(carrito);
-  auditar("Venta creada","venta",nro,`Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`);
+  const pagos=cobrado>0?[{monto:cobrado,metodo,fecha:carga.fecha,usuario:carga.vendedor}]:[];
+  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,fecha:carga.fecha,entrega:($("#vEntrega")?.value||""),clienteId:c.id,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant})),pagos,nota:($("#vNota")?.value||"").trim()});
+  if(!carga.historica) descontarStockVenta(carrito);
+  auditar(carga.historica?"Venta cargada (histórica)":"Venta creada","venta",nro,`Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`);
   const remito=$("#vRemito").checked;
   toast(`✅ Venta #${nro} cargada`+(remito?` · remito enviado a ${c.mail}`:""));
   nav("ventas");

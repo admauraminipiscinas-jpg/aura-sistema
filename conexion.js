@@ -4,9 +4,15 @@
    y el guardado para que todo quede en la base de datos.
    ============================================================ */
 
+/* `persistSession:false` = la sesión vive solo mientras la pestaña está abierta.
+   Al cerrarla o recargar hay que volver a poner usuario y contraseña, y no queda
+   ningún token guardado en la computadora. Es a propósito: las máquinas del local
+   las usa más de una persona y no puede pasar que el próximo entre con la sesión
+   del anterior. NO activar la persistencia de sesión sin hablarlo. */
 const SB = window.supabase.createClient(
   "https://dnamctecmutlmgblhnbg.supabase.co",
-  "sb_publishable_GMWcvSFIPklV9e9PCb0c2g_GMKR_J-w"
+  "sb_publishable_GMWcvSFIPklV9e9PCb0c2g_GMKR_J-w",
+  { auth: { persistSession: false, autoRefreshToken: true } }
 );
 /* Marca de que este archivo cargó: index.html la usa para avisar si falló. */
 window.SISTEMA_CONECTADO = true;
@@ -109,10 +115,14 @@ window.salir = async function(){
 window.confirmarVenta = async function(){
   if(!clienteActual){ toast("⚠️ Cargá el cliente primero"); return; }
   if(!carrito.length){ toast("⚠️ Agregá al menos un producto"); return; }
-  const _minEnt=fechaMasDias(7);
-  const _entrega=($("#vEntrega")?.value||"").trim();
-  if(!_entrega){ toast("⚠️ Falta la fecha de entrega (es obligatoria)"); $("#vEntrega")?.focus(); return; }
-  if(_entrega < _minEnt){ toast("⚠️ La entrega debe ser como mínimo 7 días desde hoy (a partir del "+fmtFechaCorta(_minEnt)+")"); $("#vEntrega")?.focus(); return; }
+  /* Fecha y vendedor: para el vendedor común son siempre hoy y él mismo.
+     El Maestro puede fecharla en el pasado y atribuirla a otro (carga histórica). */
+  const carga=datosCargaHistorica();
+  const errEnt=validarEntrega(carga);
+  if(errEnt){ toast(errEnt); $("#vEntrega")?.focus(); return; }
+  if(esMaestro() && $("#vVendedor")?.value==="__otro__" && !($("#vVendedorOtro")?.value||"").trim()){
+    toast("⚠️ Escribí el nombre del vendedor"); $("#vVendedorOtro")?.focus(); return;
+  }
   const c=clienteActual;
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
@@ -123,8 +133,8 @@ window.confirmarVenta = async function(){
   const nota=($("#vNota")?.value||"").trim();
   const remito=$("#vRemito").checked;
   const {data,error}=await SB.from('ventas').insert({
-    cliente_id:c.id, cliente_nombre:`${c.nombre} ${c.apellido}`, vendedor:nombreUsuario(),
-    fecha:hoyISO(), entrega, total, iva, factura:ventaFactura, saldo:gran-cobrado,
+    cliente_id:c.id, cliente_nombre:`${c.nombre} ${c.apellido}`, vendedor:carga.vendedor,
+    fecha:carga.fecha, entrega, total, iva, factura:ventaFactura, saldo:gran-cobrado,
     estado:"Procesando pedido", provincia:c.provincia, localidad:`${c.localidad} (${c.provincia})`, nota
   }).select().single();
   if(error){ toast("⚠️ Error al guardar la venta: "+error.message); return; }
@@ -133,18 +143,24 @@ window.confirmarVenta = async function(){
   if(items.length){ const r=await SB.from('venta_items').insert(items); if(r.error){ toast("⚠️ Venta guardada, pero error en ítems: "+r.error.message); } }
   // Pago inicial registrado
   let pagos=[];
-  if(cobrado>0){ pagos=[{monto:cobrado,metodo,fecha:data.fecha,usuario:nombreUsuario()}];
-    try{ await SB.from('pagos').insert({venta_id:nro,monto:cobrado,metodo,fecha:data.fecha,usuario:nombreUsuario()}); }catch(_){} }
-  // Descuento de stock automático
-  descontarStockVenta(carrito);
+  if(cobrado>0){ pagos=[{monto:cobrado,metodo,fecha:data.fecha,usuario:carga.vendedor}];
+    try{ await SB.from('pagos').insert({venta_id:nro,monto:cobrado,metodo,fecha:data.fecha,usuario:carga.vendedor}); }catch(_){} }
+  /* Descuento de stock automático. En una carga histórica NO se descuenta: esa
+     mercadería salió hace meses y el stock de hoy ya lo refleja; descontarla de
+     nuevo dejaría el número por debajo de lo real. */
+  if(!carga.historica) descontarStockVenta(carrito);
   // Envío automático del remito por mail (no bloquea la pantalla).
   // El servidor arma el remito con los datos de la base a partir del número de venta.
   if(remito && c.mail){
     enviarRemito({nro}).catch(e=>console.warn('Remito mail:',e));
   }
-  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
-  auditar("Venta creada","venta",nro,`Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`);
-  toast(`✅ Venta #${nro} guardada`+(remito?` · remito a ${c.mail}`:""));
+  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
+  /* La auditoría registra quién la cargó (nombreUsuario) y, si es histórica,
+     a quién se le atribuyó y con qué fecha. */
+  auditar(carga.historica?"Venta cargada (histórica)":"Venta creada","venta",nro,
+    `Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`+
+    (carga.historica?` · fecha ${fmtFechaCorta(carga.fecha)} · vendedor ${carga.vendedor}`:''));
+  toast(`✅ Venta #${nro} guardada`+(carga.historica?` · ${fmtFechaCorta(carga.fecha)} · ${carga.vendedor}`:'')+(remito&&c.mail?` · remito a ${c.mail}`:""));
   nav("ventas");
 };
 
@@ -367,19 +383,16 @@ window.confirmarCobros = async function(nro){
   }
 };
 
-/* ---- Sesión guardada: si ya habías entrado, recargar la página no te saca ----
-   Supabase deja la sesión en el navegador; antes la app arrancaba siempre en el
-   login y había que escribir usuario y contraseña en cada F5. */
-(async function restaurarSesion(){
-  try{
-    const {data:{session}}=await SB.auth.getSession();
-    if(!session || !session.user) return;
-    const {data:perfil,error:pe}=await SB.from('perfiles').select('*').eq('id',session.user.id).single();
-    if(pe || !perfil || perfil.activo===false){ await SB.auth.signOut(); return; }
-    $("#logErr").textContent="Restaurando tu sesión…";
-    await abrirApp(perfil);
-  }catch(_){
-    /* Si falla cualquier cosa queda la pantalla de login normal */
-    try{ $("#logErr").textContent=""; }catch(__){}
-  }
-})();
+/* Acá había una restauración automática de sesión. Se quitó a propósito
+   (2026-08-02): en una computadora compartida hacía que el siguiente en abrir
+   el sistema entrara con el usuario del anterior — por ejemplo, un vendedor
+   entrando como Maestro. El sistema siempre tiene que pedir usuario y
+   contraseña. No volver a agregarla.
+
+   Limpieza: las sesiones que esa versión dejó guardadas en las computadoras
+   ya no las usa nadie, pero las borramos para no dejar el token dando vueltas. */
+try{
+  Object.keys(localStorage)
+    .filter(k=>k.startsWith('sb-') && k.includes('auth-token'))
+    .forEach(k=>localStorage.removeItem(k));
+}catch(_){}
