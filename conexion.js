@@ -8,6 +8,8 @@ const SB = window.supabase.createClient(
   "https://dnamctecmutlmgblhnbg.supabase.co",
   "sb_publishable_GMWcvSFIPklV9e9PCb0c2g_GMKR_J-w"
 );
+/* Marca de que este archivo cargó: index.html la usa para avisar si falló. */
+window.SISTEMA_CONECTADO = true;
 
 /* ---- Cargar todos los datos desde la base al iniciar sesión ---- */
 async function cargarTodo(){
@@ -53,7 +55,17 @@ window.auditar = function(accion, entidad, entidadId, detalle){
 };
 
 /* ---- Persistencias auxiliares ---- */
-window.persistirStock = function(p){ try{ SB.from('productos').update({stock:String(p.stock)}).eq('id',p.id).then(()=>{}); }catch(_){} };
+/* El stock se guarda por una función de la base que toca SOLO esa columna:
+   así el vendedor puede descontar stock al vender sin poder tocar precios.
+   Si todavía no corriste `migracion_2026-08_seguridad.sql`, la función no
+   existe y caemos al update directo de siempre. */
+window.persistirStock = function(p){
+  try{
+    SB.rpc('aura_set_stock',{p_id:p.id, p_stock:String(p.stock)}).then(({error})=>{
+      if(error) SB.from('productos').update({stock:String(p.stock)}).eq('id',p.id).then(()=>{});
+    });
+  }catch(_){}
+};
 window.persistirPermisos = async function(perm){
   try{
     const rows=[]; ROLES_CONFIG.forEach(r=>{ PERMISOS_LISTA.forEach(pp=>{ rows.push({rol:r,permiso:pp.k,permitido:!!(perm[r]&&perm[r][pp.k])}); }); });
@@ -73,14 +85,18 @@ window.ingresar = async function(){
   const {data:perfil,error:pe}=await SB.from('perfiles').select('*').eq('id',data.user.id).single();
   if(pe||!perfil){ $("#logErr").textContent="Tu usuario no tiene perfil/rol asignado."; await SB.auth.signOut(); return; }
   if(perfil.activo===false){ $("#logErr").textContent="Usuario inactivo. Consultá con el Maestro."; await SB.auth.signOut(); return; }
-  USUARIO_ACTUAL={nombre:perfil.nombre||'Usuario',ap:perfil.apellido||'',rol:perfil.rol};
-  try{ await cargarTodo(); }catch(ex){ $("#logErr").textContent="Error cargando datos: "+ex.message; return; }
+  try{ await abrirApp(perfil); }catch(ex){ $("#logErr").textContent="Error cargando datos: "+ex.message; }
+};
+
+/* ---- Entrada a la app con un perfil ya validado (login o sesión guardada) ---- */
+async function abrirApp(perfil){
+  USUARIO_ACTUAL={nombre:perfil.nombre||'Usuario', ap:perfil.apellido||'', rol:perfil.rol};
+  await cargarTodo();
   $("#logErr").textContent="";
   $("#loginScreen").style.display="none"; $("#appWrap").style.display="";
   actualizarTopbarUsuario();
-  vistaActual=tabsPermitidas()[0];
-  nav(vistaActual);
-};
+  nav(tabsPermitidas()[0]);
+}
 
 window.salir = async function(){
   try{ await SB.auth.signOut(); }catch(e){}
@@ -101,7 +117,7 @@ window.confirmarVenta = async function(){
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
   const gran=total+iva;
-  const cobrado=Math.min(gran,+($("#vCobro").value||0));
+  const cobrado=Math.max(0, Math.min(gran, +($("#vCobro").value||0)));
   const metodo=($("#vPago")?.value||"Efectivo");
   const entrega=($("#vEntrega")?.value||"")||null;
   const nota=($("#vNota")?.value||"").trim();
@@ -121,16 +137,10 @@ window.confirmarVenta = async function(){
     try{ await SB.from('pagos').insert({venta_id:nro,monto:cobrado,metodo,fecha:data.fecha,usuario:nombreUsuario()}); }catch(_){} }
   // Descuento de stock automático
   descontarStockVenta(carrito);
-  // Envío automático del remito por mail (no bloquea la pantalla)
+  // Envío automático del remito por mail (no bloquea la pantalla).
+  // El servidor arma el remito con los datos de la base a partir del número de venta.
   if(remito && c.mail){
-    const _h=new Date();
-    const fechaRemito=`${String(_h.getDate()).padStart(2,'0')}/${String(_h.getMonth()+1).padStart(2,'0')}/${_h.getFullYear()}`;
-    const localidadRemito=`${c.localidad||''}${c.provincia?` (${c.provincia})`:''}`;
-    SB.auth.getSession().then(({data:{session}})=>{
-      fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
-        body:JSON.stringify({venta:{nro,cliente:`${c.nombre} ${c.apellido}`,dni:c.dni||'',telefono:c.tel||'',localidad:localidadRemito,vendedor:nombreUsuario(),fecha:fechaRemito,estado:"Procesando pedido",total,iva,factura:ventaFactura,saldo:gran-cobrado,email:c.mail,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
-      }).then(r=>r.json()).then(j=>{ if(!j.ok) console.warn('Remito mail:',j.error); }).catch(e=>console.warn('Remito mail:',e));
-    });
+    enviarRemito({nro}).catch(e=>console.warn('Remito mail:',e));
   }
   VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:nombreUsuario(),fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
   auditar("Venta creada","venta",nro,`Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`);
@@ -149,32 +159,43 @@ window.guardarEdicionVenta = function(nro){
     try{
       const r1=await SB.from('ventas').update({total:v.total, iva:v.iva, factura:v.factura, saldo:v.saldo, nota:v.nota}).eq('id',nro);
       if(r1.error) throw r1.error;
-      await SB.from('venta_items').delete().eq('venta_id',nro);
+      /* Primero insertamos los ítems nuevos y recién después borramos los viejos:
+         si el insert falla, la venta no se queda sin productos. */
+      const {data:itemsViejos}=await SB.from('venta_items').select('id').eq('venta_id',nro);
       if(v.items.length){ const r2=await SB.from('venta_items').insert(v.items.map(i=>({venta_id:nro,nombre:i.nombre,precio:i.precio,cantidad:i.cant,categoria:i.categoria||null}))); if(r2.error) throw r2.error; }
+      if(itemsViejos && itemsViejos.length){ const rd=await SB.from('venta_items').delete().in('id',itemsViejos.map(x=>x.id)); if(rd.error) throw rd.error; }
       if(nuevos.length){ const r3=await SB.from('pagos').insert(nuevos.map(pp=>({venta_id:nro,monto:pp.monto,metodo:pp.metodo,fecha:pp.fecha,usuario:pp.usuario}))); if(r3.error) throw r3.error; }
     }catch(ex){ toast("⚠️ Guardado en pantalla OK, pero error en la base: "+(ex.message||ex)); }
   })();
   return true;
 };
 
-/* ---- Reenvío de comprobante / correo completo al cliente ---- */
+/* ---- Envío de correos al cliente ----
+   Solo mandamos el número de venta: el servidor resuelve el destinatario y los
+   importes contra la base. `soloRemito` manda únicamente el comprobante;
+   sin esa marca se adjunta también el manual de usuario. */
+async function enviarRemito({nro, soloRemito, tipo}){
+  const {data:{session}}=await SB.auth.getSession();
+  const r=await fetch('/api/enviar-remito',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+    body:JSON.stringify({nro, soloRemito:!!soloRemito, tipo})
+  });
+  let j={}; try{ j=await r.json(); }catch(_){}
+  if(!r.ok||!j.ok) throw new Error(j.error||'No se pudo enviar el correo');
+  return j;
+}
+
 async function _enviarRemitoVenta(nro, completo){
   const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
   const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
   if(!c.mail){ toast("⚠️ El cliente no tiene email cargado"); return; }
   toast("Enviando…");
-  const _h=new Date();
-  const fechaRemito=`${String(_h.getDate()).padStart(2,'0')}/${String(_h.getMonth()+1).padStart(2,'0')}/${_h.getFullYear()}`;
-  const localidadRemito=`${c.localidad||''}${c.provincia?` (${c.provincia})`:''}`;
   try{
-    const {data:{session}}=await SB.auth.getSession();
-    const r=await fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
-      body:JSON.stringify({completo:!!completo, venta:{nro:v.nro,cliente:v.cliente,dni:c.dni||'',telefono:c.tel||'',localidad:localidadRemito,vendedor:v.vendedor,fecha:fechaRemito,estado:v.estado,total:v.total,iva:v.iva||0,factura:!!v.factura,saldo:v.saldo,email:c.mail,items:(v.items||[]).map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})});
-    const j=await r.json();
-    if(!r.ok||!j.ok){ toast("⚠️ "+(j.error||'No se pudo enviar')); return; }
-    auditar(completo?"Correo completo reenviado":"Comprobante reenviado","venta",nro,c.mail);
-    toast("✅ Enviado a "+c.mail);
-  }catch(ex){ toast("⚠️ Error de conexión al enviar el correo"); }
+    const j=await enviarRemito({nro, soloRemito:!completo});
+    auditar(completo?"Correo completo reenviado":"Comprobante reenviado","venta",nro,j.email||c.mail);
+    toast("✅ Enviado a "+(j.email||c.mail));
+  }catch(ex){ toast("⚠️ "+(ex.message||'Error de conexión al enviar el correo')); }
 }
 window.reenviarComprobante = function(nro){ cerrarModal(); _enviarRemitoVenta(nro,false); };
 window.reenviarCorreoCompleto = function(nro){ cerrarModal(); _enviarRemitoVenta(nro,true); };
@@ -239,20 +260,52 @@ window.guardarEstados=async function(){ _guardarEstados(); try{ await SB.from('e
 const _guardarCategorias=window.guardarCategorias;
 window.guardarCategorias=async function(){ _guardarCategorias(); try{ await SB.from('categorias').delete().neq('id',-1); await SB.from('categorias').insert(CATEGORIAS.map((c,i)=>({nombre:c,orden:i+1}))); }catch(ex){ toast("⚠️ Error guardando categorías: "+ex.message); } };
 
-/* ---- Usuarios: editar perfil/rol/estado (el alta de login se hace en Supabase) ---- */
+/* ---- Usuarios: perfil, rol, estado y contraseña ----
+   `perfiles` es de solo lectura desde el navegador y las contraseñas viven en
+   Supabase Auth: todo esto pasa por las funciones de servidor, que validan
+   Maestro y usan la clave secreta. */
+async function apiUsuarios(ruta, payload){
+  const { data:{ session } } = await SB.auth.getSession();
+  const r = await fetch(ruta, {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+    body: JSON.stringify(payload)
+  });
+  let j={}; try{ j=await r.json(); }catch(_){}
+  if(!r.ok || !j.ok) throw new Error(j.error || 'No se pudo completar la operación');
+  return j;
+}
+
 const _toggleUsuario=window.toggleUsuario;
-window.toggleUsuario=function(i){ _toggleUsuario(i); const u=USUARIOS[i]; if(u&&u.id) SB.from('perfiles').update({activo:u.activo}).eq('id',u.id).then(()=>{}); };
+window.toggleUsuario=async function(i){
+  if(!puede('gestionar_usuarios')){ toast("No tenés permiso para gestionar usuarios"); return; }
+  const u=USUARIOS[i]; if(!u) return;
+  if(!u.id){ toast("⚠️ Este usuario todavía no existe en la base"); return; }
+  try{ await apiUsuarios('/api/editar-usuario', {id:u.id, activo:!u.activo}); }
+  catch(ex){ toast("⚠️ No se pudo guardar: "+ex.message); return; }
+  _toggleUsuario(i);   // la pantalla se actualiza recién cuando la base confirmó
+};
 
 window.guardarUsuario=async function(i){
   const nombre=$("#uNombre").value.trim(), ap=$("#uAp").value.trim(), user=$("#uUser").value.trim(), rol=$("#uRol").value, activo=$("#uActivo").value==="1";
   if(!nombre||!ap||!user){ toast("⚠️ Completá nombre, apellido y usuario"); return; }
   if(i!=null){
-    const u=USUARIOS[i]; const r=await SB.from('perfiles').update({nombre,apellido:ap,usuario:user,rol,activo}).eq('id',u.id);
-    if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
-    Object.assign(u,{nombre,ap,user,rol,activo}); auditar("Usuario modificado","usuario",user,`${nombre} ${ap} · ${rol}`); cerrarModal(); viewUsuarios(); toast("✅ Usuario actualizado");
+    const u=USUARIOS[i];
+    if(!u.id){ toast("⚠️ Este usuario todavía no existe en la base"); return; }
+    const pass=$("#uPass").value;
+    if(pass && pass.length<6){ $("#uPass").classList.add("err"); toast("⚠️ La contraseña tiene que tener al menos 6 caracteres"); return; }
+    toast("Guardando…");
+    let j;
+    try{ j=await apiUsuarios('/api/editar-usuario', {id:u.id, nombre, apellido:ap, usuario:user, rol, activo, password:pass||undefined}); }
+    catch(ex){ toast("⚠️ "+ex.message); return; }
+    Object.assign(u,{nombre,ap,user:j.usuario||user,rol,activo});
+    auditar("Usuario modificado","usuario",u.user,`${nombre} ${ap} · ${rol}${j.passwordCambiada?' · contraseña nueva':''}`);
+    cerrarModal(); viewUsuarios();
+    toast(j.passwordCambiada?"✅ Usuario actualizado · contraseña nueva":"✅ Usuario actualizado");
   } else {
     const pass = $("#uPass").value;
     if(!pass){ $("#uPass").classList.add("err"); toast("⚠️ Asigná una contraseña"); return; }
+    if(pass.length<6){ $("#uPass").classList.add("err"); toast("⚠️ La contraseña tiene que tener al menos 6 caracteres"); return; }
     const userNorm = user.toLowerCase().replace(/\s+/g,'-');
     if(!/^[a-z0-9._-]+$/.test(userNorm)){ $("#uUser").classList.add("err"); toast("⚠️ El usuario solo puede tener letras, números, puntos o guiones (sin espacios ni acentos)"); return; }
     const email = userNorm+'@aura.local';
@@ -281,32 +334,52 @@ window.cambiarEstadoInline = function(nro, val){
 
 /* ---- Confirmar cobros (lista de trabajo): resincroniza pagos + saldo y manda SOLO el remito si se pidió ---- */
 const _confirmarCobros = window.confirmarCobros;
-window.confirmarCobros = function(nro){
+window.confirmarCobros = async function(nro){
   const mailEl=$("#cobMail"); const enviar=!!(mailEl && mailEl.checked);
   _confirmarCobros(nro);   // aplica en memoria + audita + cierra modal + toast
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
-  (async()=>{
-    try{
-      await SB.from('pagos').delete().eq('venta_id', nro);
-      if(v.pagos && v.pagos.length){
-        const r=await SB.from('pagos').insert(v.pagos.map(p=>({venta_id:nro, monto:p.monto, metodo:p.metodo, fecha:p.fecha, usuario:p.usuario})));
-        if(r.error) throw r.error;
-      }
-      const r2=await SB.from('ventas').update({saldo:v.saldo}).eq('id', nro);
-      if(r2.error) throw r2.error;
-    }catch(ex){ toast("⚠️ Guardado en pantalla, pero error guardando en la base: "+(ex.message||ex)); }
-  })();
+  try{
+    /* Insertamos los pagos nuevos ANTES de borrar los viejos: si el insert
+       falla, los cobros originales siguen en la base (antes se perdían). */
+    const {data:viejos}=await SB.from('pagos').select('id').eq('venta_id', nro);
+    if(v.pagos && v.pagos.length){
+      const r=await SB.from('pagos').insert(v.pagos.map(p=>({venta_id:nro, monto:p.monto, metodo:p.metodo, fecha:p.fecha, usuario:p.usuario})));
+      if(r.error) throw r.error;
+    }
+    if(viejos && viejos.length){
+      const rd=await SB.from('pagos').delete().in('id', viejos.map(x=>x.id));
+      if(rd.error) throw rd.error;
+    }
+    const r2=await SB.from('ventas').update({saldo:v.saldo}).eq('id', nro);
+    if(r2.error) throw r2.error;
+  }catch(ex){
+    toast("⚠️ Guardado en pantalla, pero error guardando en la base: "+(ex.message||ex));
+    return;   // sin guardar no mandamos un comprobante con datos que no coinciden
+  }
   if(enviar){
     const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
     if(!c.mail){ toast("⚠️ El cliente no tiene email cargado"); return; }
     toast("Enviando comprobante…");
-    const _h=new Date();
-    const fechaRemito=`${String(_h.getDate()).padStart(2,'0')}/${String(_h.getMonth()+1).padStart(2,'0')}/${_h.getFullYear()}`;
-    const localidadRemito=`${c.localidad||''}${c.provincia?` (${c.provincia})`:''}`;
-    SB.auth.getSession().then(({data:{session}})=>{
-      fetch('/api/enviar-remito',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
-        body:JSON.stringify({tipo:'cobro', soloRemito:true, venta:{nro:v.nro,cliente:v.cliente,dni:c.dni||'',telefono:c.tel||'',localidad:localidadRemito,vendedor:v.vendedor,fecha:fechaRemito,estado:v.estado,total:v.total,iva:v.iva||0,factura:!!v.factura,saldo:v.saldo,email:c.mail,items:(v.items||[]).map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant}))}})
-      }).then(r=>r.json()).then(j=>{ if(j.ok){ toast("✅ Comprobante enviado a "+c.mail); } else { toast("⚠️ "+(j.error||'No se pudo enviar el comprobante')); } }).catch(()=>toast("⚠️ Error de conexión al enviar el comprobante"));
-    });
+    try{
+      const j=await enviarRemito({nro, soloRemito:true, tipo:'cobro'});
+      toast("✅ Comprobante enviado a "+(j.email||c.mail));
+    }catch(ex){ toast("⚠️ "+(ex.message||'No se pudo enviar el comprobante')); }
   }
 };
+
+/* ---- Sesión guardada: si ya habías entrado, recargar la página no te saca ----
+   Supabase deja la sesión en el navegador; antes la app arrancaba siempre en el
+   login y había que escribir usuario y contraseña en cada F5. */
+(async function restaurarSesion(){
+  try{
+    const {data:{session}}=await SB.auth.getSession();
+    if(!session || !session.user) return;
+    const {data:perfil,error:pe}=await SB.from('perfiles').select('*').eq('id',session.user.id).single();
+    if(pe || !perfil || perfil.activo===false){ await SB.auth.signOut(); return; }
+    $("#logErr").textContent="Restaurando tu sesión…";
+    await abrirApp(perfil);
+  }catch(_){
+    /* Si falla cualquier cosa queda la pantalla de login normal */
+    try{ $("#logErr").textContent=""; }catch(__){}
+  }
+})();

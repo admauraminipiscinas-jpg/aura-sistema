@@ -262,15 +262,9 @@ const CLIENTES = HAY_DATOS ? (window.DATOS.clientes || []) : [
   {id:4, nombre:"Marcela Casas", dni:"26207347", tel:"+54 9 3535 10-2495", mail:"machesc@hotmail.com", provincia:"Córdoba", localidad:"Villa Nueva", saldo:3199000, activo:true},
   {id:5, nombre:"Pintar Junín S.R.L.", dni:"30714481025", tel:"+54 9 2364 24-6263", mail:"administracion@grupopintarjunin.com.ar", provincia:"Buenos Aires", localidad:"Ramallo", saldo:3870790, activo:true},
 ];
-const USUARIOS = [
-  {nombre:"Alex", ap:"Antúnez", user:"Alex-aura", rol:"Vendedor", activo:true, pass:"demo1234"},
-  {nombre:"Carolina", ap:"Fabro", user:"Carolina1", rol:"Vendedor", activo:true, pass:"demo1234"},
-  {nombre:"Dani", ap:"Díaz", user:"Danielaura", rol:"Vendedor", activo:true, pass:"demo1234"},
-  {nombre:"Desiree", ap:"Meireles", user:"Desi.M", rol:"Vendedor", activo:false, pass:"demo1234"},
-  {nombre:"Facu", ap:"Garro", user:"Facu.garro", rol:"Vendedor", activo:true, pass:"demo1234"},
-  {nombre:"Mariano", ap:"Gómez", user:"mariano.adm", rol:"Administrador", activo:true, pass:"demo1234"},
-  {nombre:"Aura", ap:"Admin", user:"adm.aura", rol:"Maestro", activo:true, pass:"demo1234"},
-];
+/* Se llena desde la base en cargarTodo(). Sin contraseñas: las credenciales
+   viven en Supabase Auth, nunca en el HTML que llega al navegador. */
+const USUARIOS = [];
 let VENTAS = HAY_DATOS ? window.DATOS.ventas : [
   {nro:1739, cliente:"Marcela Casas", localidad:"Villa Nueva (Córdoba)", total:6500000, saldo:3301000, estado:"En fabricación", vendedor:"Carolina Fabro", fecha:"2026-06-18", entrega:"2026-06-30", clienteId:4, items:[{nombre:"Línea 330 · Color Arena", precio:6500000, cant:1}], nota:"El cliente pidió borde atérmico reforzado. Confirmar color final antes de fabricar."},
   {nro:1738, cliente:"Pintar Junín S.R.L.", localidad:"Ramallo (Buenos Aires)", total:7800000, saldo:0, estado:"Procesando pedido", vendedor:"Facu Garro", fecha:"2026-06-15", entrega:"2026-06-19", clienteId:5, items:[{nombre:"Línea 370 · Color Blanco", precio:7800000, cant:1}]},
@@ -288,6 +282,11 @@ const PROVINCIAS = [
 /* ====== HELPERS ====== */
 const $ = s => document.querySelector(s);
 const money = n => "$ " + (n||0).toLocaleString("es-AR");
+/* Escape de HTML. TODO texto que venga de la base o de un formulario (nombres,
+   notas, localidades, métodos de pago…) tiene que pasar por acá antes de entrar
+   en un innerHTML o en un atributo. Sin esto, un cliente llamado
+   `<img src=x onerror=...>` ejecuta código en la sesión de quien lo mire. */
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let carrito = [];          // items de la venta en curso
 let vProdSel = null;       // producto elegido en el buscador de Vender
 let ventaFactura = false;  // ¿Necesita factura? (suma IVA 21%)
@@ -416,19 +415,13 @@ function auditar(accion, entidad, entidadId, detalle){
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600);}
 function toggleMenu(){$("#side").classList.toggle("open");}
 
-/* ====== LOGIN ====== */
+/* ====== LOGIN ======
+   Esta versión es solo un cartel de error: el login real lo define conexion.js
+   contra Supabase Auth. Si conexion.js no cargó, nadie tiene que poder entrar
+   (antes la app caía en un modo demo con datos falsos, sin avisar). */
 function ingresar(){
-  const u=$("#logUser").value.trim(), p=$("#logPass").value;
-  const usr=USUARIOS.find(x=>(""+x.user).toLowerCase()===u.toLowerCase() && x.pass===p);
-  if(!usr){ $("#logErr").textContent="Usuario o contraseña incorrectos."; return; }
-  if(usr.activo===false){ $("#logErr").textContent="Usuario inactivo. Consultá con el administrador."; return; }
-  USUARIO_ACTUAL = {nombre:usr.nombre, ap:usr.ap, rol:usr.rol};
-  $("#logErr").textContent="";
-  $("#loginScreen").style.display="none";
-  $("#appWrap").style.display="";
-  actualizarTopbarUsuario();
-  vistaActual = tabsPermitidas()[0];
-  nav(vistaActual);
+  $("#logErr").style.color="var(--rojo)";
+  $("#logErr").textContent="No se pudo conectar con la base de datos. Recargá la página (Cmd/Ctrl + Shift + R); si sigue igual, avisá al administrador.";
 }
 function salir(){
   $("#appWrap").style.display="none";
@@ -437,10 +430,18 @@ function salir(){
   const u=$("#logUser"); if(u) u.focus();
 }
 function actualizarTopbarUsuario(){
-  const el=$("#topUser"); if(el) el.innerHTML=`👤 <b>${nombreUsuario()}</b> · <span style="color:var(--verde);font-weight:700">${USUARIO_ACTUAL.rol}</span>`;
+  const el=$("#topUser"); if(el) el.innerHTML=`👤 <b>${esc(nombreUsuario())}</b> · <span style="color:var(--verde);font-weight:700">${esc(USUARIO_ACTUAL.rol)}</span>`;
 }
 function nav(v){
-  if(!tabsPermitidas().includes(v)) v = tabsPermitidas()[0];
+  const permitidas = tabsPermitidas();
+  /* Si al rol le sacaron todos los permisos, antes esto tiraba un error y
+     dejaba la pantalla en blanco. Ahora explica qué pasó. */
+  if(!permitidas.length){
+    $("#side").innerHTML="";
+    $("#main").innerHTML=`<h1 class="page">Sin secciones habilitadas</h1><div class="card"><div class="empty">Tu rol (<b>${esc(USUARIO_ACTUAL.rol)}</b>) no tiene ninguna sección habilitada.<br>Pedile al Maestro que te asigne permisos desde <b>Usuarios → ⚙️ Permisos por rol</b>.</div></div>`;
+    return;
+  }
+  if(!permitidas.includes(v)) v = permitidas[0];
   vistaActual = v;
   renderSidebar();
   $("#side").classList.remove("open");
@@ -460,7 +461,7 @@ function viewVender(){
         <div class="card">
           <div class="toolbar" style="margin-bottom:10px">
             <h3>Cliente</h3>
-            <span class="legend">Todos los clientes son nuevos</span>
+            <span class="legend">Buscá si ya compró antes, o cargalo como nuevo</span>
           </div>
           <div id="clienteBox"></div>
           <div class="row" style="margin-top:14px">
@@ -511,7 +512,7 @@ function viewVender(){
             </div>
             <div class="field">
               <label>Monto cobrado ahora</label>
-              ${esVendedor() ? `<input type="number" id="vCobro" value="${SENA_VENDEDOR}" readonly title="Seña fija de vendedores" style="background:#eef2f1;color:#52605b;cursor:not-allowed;font-weight:700"><small class="legend" style="display:block;margin-top:5px">🔒 Seña fija de ${money(SENA_VENDEDOR)} — no editable</small>` : `<input type="number" id="vCobro" value="0" oninput="recalc()">`}
+              ${esVendedor() ? `<input type="number" id="vCobro" value="${SENA_VENDEDOR}" readonly title="Seña fija de vendedores" style="background:#eef2f1;color:#52605b;cursor:not-allowed;font-weight:700"><small class="legend" style="display:block;margin-top:5px">🔒 Seña fija de ${money(SENA_VENDEDOR)} — no editable</small>` : `<input type="number" id="vCobro" value="0" min="0" step="any" oninput="recalc()">`}
             </div>
           </div>
           <div class="switch" style="margin-top:14px">
@@ -540,7 +541,6 @@ function viewVender(){
         <div class="l">Cobrado <b id="sCobrado" class="green">$ 0</b></div>
         <div class="l">Saldo <b id="sSaldo" class="red">$ 0</b></div>
         <button class="btn btn-greenlight" style="width:100%;margin-top:16px;justify-content:center;font-size:15px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
-        <button class="btn btn-amber" style="width:100%;margin-top:10px;justify-content:center" onclick="toast('Presupuesto guardado (demo)')">📄 Solo presupuestar</button>
       </div>
     </div>`;
   renderClienteBox();
@@ -552,9 +552,17 @@ function renderClienteBox(){
   const box = $("#clienteBox"); if(!box) return;
   if(!clienteActual){
     box.innerHTML = `
-      <div class="cli-empty">
-        <span class="legend">Cargá los datos del comprador para poder vender. El remito se enviará al correo que indiques.</span>
-        <button class="btn btn-greenlight btn-sm" onclick="abrirModalCliente('venta')">＋ Cargar cliente</button>
+      <div class="cli-empty" style="flex-direction:column;align-items:stretch;gap:10px">
+        <span class="legend">Buscá al comprador por nombre, DNI, teléfono o email. Si es la primera vez que compra, cargalo como cliente nuevo. El remito se envía al correo que figure en su ficha.</span>
+        <div class="row" style="align-items:end">
+          <div class="field" style="flex:3;position:relative;min-width:0">
+            <input id="vCliBuscar" autocomplete="off" placeholder="🔍 Escribí 3+ letras: nombre, DNI, teléfono o email…"
+                   oninput="filtrarClientes(this.value)" onfocus="filtrarClientes(this.value)"
+                   onblur="setTimeout(()=>{const b=$('#vCliSug');if(b)b.classList.remove('show')},200)">
+            <div id="vCliSug" class="sug"></div>
+          </div>
+          <button class="btn btn-greenlight btn-sm" onclick="abrirModalCliente('venta')">＋ Cliente nuevo</button>
+        </div>
       </div>`;
     return;
   }
@@ -563,16 +571,34 @@ function renderClienteBox(){
     <div class="cli-card">
       <div class="cli-ico">👤</div>
       <div class="cli-data">
-        <b>${c.nombre} ${c.apellido}</b>
-        <span>DNI ${c.dni} · 📞 ${c.tel}</span>
-        <span>📧 ${c.mail}</span>
-        <span>📍 ${c.localidad} (${c.provincia})</span>
+        <b>${esc(c.nombre)} ${esc(c.apellido)}</b>
+        <span>DNI ${esc(c.dni)} · 📞 ${esc(c.tel)}</span>
+        <span>📧 ${esc(c.mail)}</span>
+        <span>📍 ${esc(c.localidad)} (${esc(c.provincia)})</span>
       </div>
       <div class="cli-acts">
         <button class="btn btn-ghost btn-sm" onclick="abrirModalCliente('venta')">✏️ Editar</button>
         <button class="btn btn-ghost btn-sm" onclick="cambiarCliente()">🔁 Cambiar</button>
       </div>
     </div>`;
+}
+
+/* Buscador de clientes ya cargados (evita duplicar al que ya compró antes) */
+function filtrarClientes(q){
+  const box=$("#vCliSug"); if(!box) return;
+  q=(q||"").trim().toLowerCase();
+  if(q.length<3){ box.classList.remove("show"); box.innerHTML=""; return; }
+  const activos=CLIENTES.filter(c=>c.activo!==false);
+  const m=activos.filter(c=>((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')).toLowerCase().includes(q)).slice(0,8);
+  box.innerHTML = m.length
+    ? m.map(c=>`<div class="it" onmousedown="elegirCliente(${c.id})"><b>${esc(c.nombre)} ${esc(c.apellido)}</b> <small>· DNI ${esc(c.dni||'—')}</small><br><small>${esc(c.localidad||'')}${c.provincia?` (${esc(c.provincia)})`:''} — ${esc(c.mail||'sin email')}</small></div>`).join("")
+    : `<div class="none">Sin coincidencias para "${esc(q)}". Cargalo con "＋ Cliente nuevo".</div>`;
+  box.classList.add("show");
+}
+function elegirCliente(id){
+  const c=CLIENTES.find(x=>x.id===id); if(!c) return;
+  clienteActual={id:c.id, nombre:c.nombre||'', apellido:c.apellido||'', dni:c.dni||'', tel:c.tel||'', mail:c.mail||'', provincia:c.provincia||'', localidad:c.localidad||''};
+  renderClienteBox();
 }
 
 function abrirModalCliente(modo, id){
@@ -590,12 +616,12 @@ function abrirModalCliente(modo, id){
         </header>
         <div class="body">
           <div class="row">
-            <div class="field"><label>Nombre <span class="req">*</span></label><input id="cNombre" value="${c.nombre||''}" placeholder="Nombre"></div>
-            <div class="field"><label>Apellido <span class="req">*</span></label><input id="cApellido" value="${c.apellido||''}" placeholder="Apellido"></div>
+            <div class="field"><label>Nombre <span class="req">*</span></label><input id="cNombre" value="${esc(c.nombre)}" placeholder="Nombre"></div>
+            <div class="field"><label>Apellido <span class="req">*</span></label><input id="cApellido" value="${esc(c.apellido)}" placeholder="Apellido"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>DNI <span class="req">*</span></label><input id="cDni" inputmode="numeric" value="${c.dni||''}" placeholder="Sin puntos"></div>
-            <div class="field"><label>Teléfono <span class="req">*</span></label><input id="cTel" value="${c.tel||''}" placeholder="Cód. área + número"></div>
+            <div class="field"><label>DNI <span class="req">*</span></label><input id="cDni" inputmode="numeric" value="${esc(c.dni)}" placeholder="Sin puntos"></div>
+            <div class="field"><label>Teléfono <span class="req">*</span></label><input id="cTel" value="${esc(c.tel)}" placeholder="Cód. área + número"></div>
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field"><label>Provincia <span class="req">*</span></label>
@@ -604,10 +630,10 @@ function abrirModalCliente(modo, id){
                 ${PROVINCIAS.map(p=>`<option ${c.provincia===p?'selected':''}>${p}</option>`).join("")}
               </select>
             </div>
-            <div class="field"><label>Localidad <span class="req">*</span></label><input id="cLocalidad" value="${c.localidad||''}" placeholder="Ej. La Plata"></div>
+            <div class="field"><label>Localidad <span class="req">*</span></label><input id="cLocalidad" value="${esc(c.localidad)}" placeholder="Ej. La Plata"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field" style="flex:1 1 100%"><label>Email <span class="req">*</span></label><input id="cMail" type="email" value="${c.mail||''}" placeholder="cliente@correo.com">
+            <div class="field" style="flex:1 1 100%"><label>Email <span class="req">*</span></label><input id="cMail" type="email" value="${esc(c.mail)}" placeholder="cliente@correo.com">
               <div class="help">📧 A este correo se enviará el remito con el detalle de la venta cargada.</div>
             </div>
           </div>
@@ -681,8 +707,8 @@ function filtrarProductos(q){
   const activos=PRODUCTOS.filter(p=>p.activo!==false);
   const matches=activos.filter(p=>(p.nombre+" "+(p.desc||"")+" "+(p.cat||"")).toLowerCase().includes(q)).slice(0,8);
   box.innerHTML = matches.length
-    ? matches.map(p=>`<div class="it" onmousedown="elegirProducto(${p.id})"><b>${p.nombre}</b> <small>· ${p.desc||''}</small><br><small>${p.cat} — ${money(p.precio)}</small></div>`).join("")
-    : `<div class="none">Sin coincidencias para "${q}"</div>`;
+    ? matches.map(p=>`<div class="it" onmousedown="elegirProducto(${p.id})"><b>${esc(p.nombre)}</b> <small>· ${esc(p.desc)}</small><br><small>${esc(p.cat)} — ${money(p.precio)}</small></div>`).join("")
+    : `<div class="none">Sin coincidencias para "${esc(q)}"</div>`;
   box.classList.add("show");
 }
 function elegirProducto(id){
@@ -712,8 +738,8 @@ function renderItems(){
   tb.innerHTML=carrito.map(i=>{
     const base=i.precio*i.cant, iva=ventaFactura?base*IVA_PCT:0;
     return ventaFactura
-      ? `<tr><td>${i.cant}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`
-      : `<tr><td>${i.cant}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`;
+      ? `<tr><td>${i.cant}</td><td>${esc(i.nombre)}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`
+      : `<tr><td>${i.cant}</td><td>${esc(i.nombre)}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="delItem(${i.id})">🗑️</button></td></tr>`;
   }).join("");
   recalc();
 }
@@ -721,7 +747,7 @@ function recalc(){
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
   const gran=total+iva;
-  const cobrado=Math.min(gran,+($("#vCobro")?.value||0));
+  const cobrado=Math.max(0, Math.min(gran, +($("#vCobro")?.value||0)));
   if($("#sTotal")){
     $("#sTotalLbl").textContent = ventaFactura?"Subtotal":"Total";
     $("#sTotal").textContent=money(total);
@@ -743,7 +769,7 @@ function confirmarVenta(){
   const total=carrito.reduce((a,i)=>a+i.precio*i.cant,0);
   const iva=ventaFactura?total*IVA_PCT:0;
   const gran=total+iva;
-  const cobrado=Math.min(gran,+$("#vCobro").value||0);
+  const cobrado=Math.max(0, Math.min(gran, +$("#vCobro").value||0));
   const metodo=($("#vPago")?.value||"Efectivo");
   const nro=Math.max(0,...VENTAS.map(v=>v.nro))+1;
   const pagos=cobrado>0?[{monto:cobrado,metodo,fecha:hoyISO(),usuario:nombreUsuario()}]:[];
@@ -772,7 +798,7 @@ function granTotal(v){ return Number(v.total||0) + Number(v.iva||0); }
 
 /* ====== VENTAS ====== */
 function estColor(nombre){const e=ESTADOS.find(x=>x.nombre===nombre);return COLORES[e?e.color:"gris"]||COLORES.gris;}
-function estBadge(e){ return `<b>${e}</b>`; }
+function estBadge(e){ return `<b>${esc(e)}</b>`; }
 
 function thSort(label,key){
   const act = ventasSort.key===key;
@@ -829,7 +855,7 @@ function viewRanking(){
   const filas = lista.map((x,i)=>`
       <tr>
         <td style="color:var(--muted);white-space:nowrap">${i+1}</td>
-        <td>${x.nombre}</td>
+        <td>${esc(x.nombre)}</td>
         <td style="font-weight:800;font-size:15px">${x.mes}</td>
         <td style="color:var(--muted)">${x.anio}</td>
       </tr>`).join("");
@@ -864,7 +890,7 @@ function viewVentas(){
         <button class="btn btn-green" onclick="renderTablaVentas()">🔍 Buscar</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleMasFiltros()">Ver más filtros ${ventasFiltrosOpen?'▲':'▾'}</button>
         <div style="flex:1;min-width:10px"></div>
-        <input class="search" placeholder="🔍 N° venta, cliente, teléfono, email, nota…" value="${ventasQuery.replace(/"/g,'&quot;')}" oninput="ventasQuery=this.value;renderTablaVentas()">
+        <input class="search" placeholder="🔍 N° venta, cliente, teléfono, email, nota…" value="${esc(ventasQuery)}" oninput="ventasQuery=this.value;renderTablaVentas()">
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="chip" onclick="setRango('30')">Últimos 30 días</button>
@@ -877,19 +903,19 @@ function viewVentas(){
           <div class="field"><label>Provincia</label>
             <select id="fProvincia" onchange="ventasProvincia=this.value;renderTablaVentas()">
               <option value="">Todas las provincias</option>
-              ${provincias.map(p=>`<option ${ventasProvincia===p?'selected':''}>${p}</option>`).join("")}
+              ${provincias.map(p=>`<option ${ventasProvincia===p?'selected':''}>${esc(p)}</option>`).join("")}
             </select>
           </div>
           <div class="field"><label>Estado</label>
             <select id="fEstado" onchange="ventasEstado=this.value;renderTablaVentas()">
               <option value="">Todos los estados</option>
-              ${ESTADOS.map(e=>`<option ${ventasEstado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}
+              ${ESTADOS.map(e=>`<option ${ventasEstado===e.nombre?'selected':''}>${esc(e.nombre)}</option>`).join("")}
             </select>
           </div>
           <div class="field"><label>Vendedor</label>
             <select id="fVendedor" onchange="ventasVendedor=this.value;renderTablaVentas()">
               <option value="">Todos los vendedores</option>
-              ${vendedores.map(v=>`<option ${ventasVendedor===v?'selected':''}>${v}</option>`).join("")}
+              ${vendedores.map(v=>`<option ${ventasVendedor===v?'selected':''}>${esc(v)}</option>`).join("")}
             </select>
           </div>
           <button class="btn btn-ghost" onclick="limpiarFiltros()">↺ Limpiar filtros</button>
@@ -1005,8 +1031,8 @@ function exportarExcel(soloSeleccion){
     XLSX.writeFile(wb, nombre+".xlsx");
     toast(`✅ ${rows.length} venta(s) exportadas a Excel`);
   } else {
-    const esc=s=>`"${(""+s).replace(/"/g,'""')}"`;
-    const csv=[cols.join(";")].concat(filas.map(f=>cols.map(k=>esc(f[k])).join(";"))).join("\r\n");
+    const csvEsc=s=>`"${(""+s).replace(/"/g,'""')}"`;
+    const csv=[cols.join(";")].concat(filas.map(f=>cols.map(k=>csvEsc(f[k])).join(";"))).join("\r\n");
     const a=document.createElement("a");
     a.href=URL.createObjectURL(new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8;"}));
     a.download=nombre+".csv"; a.click();
@@ -1085,15 +1111,15 @@ function renderTablaVentas(){
     const estadoCell = canc
       ? `<b style="color:var(--rojo)">Cancelada</b>`
       : ((esMaestro()||esAdmin())
-          ? `<select class="estado-sel" onchange="cambiarEstadoInline(${v.nro}, this.value)">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}</select>`
+          ? `<select class="estado-sel" onchange="cambiarEstadoInline(${v.nro}, this.value)">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${esc(e.nombre)}</option>`).join("")}${ESTADOS.some(e=>e.nombre===v.estado)?'':`<option selected>${esc(v.estado)}</option>`}</select>`
           : estBadge(v.estado));
     const ivaTag = v.factura ? `<br><span class="cont cont-rest">c/IVA</span>` : "";
     return `
     <tr class="${canc?'cancelada':''}">
     <td class="chkcell"><input type="checkbox" style="width:auto" ${ventasSel.has(v.nro)?'checked':''} onclick="toggleSelVenta(${v.nro},this.checked)"></td>
-    <td><b>#${v.nro}</b></td><td>${fmtFechaCorta(v.fecha)}</td><td>${entregaCell(v)}</td><td>${v.cliente}</td><td>${v.localidad}</td>
+    <td><b>#${v.nro}</b></td><td>${fmtFechaCorta(v.fecha)}</td><td>${entregaCell(v)}</td><td>${esc(v.cliente)}</td><td>${esc(v.localidad)}</td>
     <td>${money(granTotal(v))}${ivaTag}</td><td><b>${money(v.saldo)}</b></td>
-    <td>${estadoCell}</td><td>${v.vendedor}</td>
+    <td>${estadoCell}</td><td>${esc(v.vendedor)}</td>
     <td class="acts">
       ${(!canc && puede('editar_venta'))?`<button class="btn btn-ghost btn-sm" title="Editar venta" onclick="abrirEditarVenta(${v.nro})">✏️</button>`:''}
       ${(!canc && (esMaestro()||esAdmin()) && (v.saldo>0 || (v.pagos&&v.pagos.length)))?`<button class="btn btn-ghost btn-sm" title="Cobros / saldo" onclick="cobrarSaldo(${v.nro})">💲</button>`:''}
@@ -1116,7 +1142,7 @@ function abrirCancelarVenta(nro){
       <div class="modal" style="max-width:440px">
         <header><h3>Cancelar venta #${nro}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
-          <p style="font-size:15px;line-height:1.5">Vas a cancelar la venta de <b>${v.cliente}</b> por <b>${money(v.total)}</b>.</p>
+          <p style="font-size:15px;line-height:1.5">Vas a cancelar la venta de <b>${esc(v.cliente)}</b> por <b>${money(v.total)}</b>.</p>
           <div class="help" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;margin-top:12px">La venta <b>no se elimina</b>: queda marcada como <b>Cancelada</b> (en rojo) y se sigue contando para la tasa de cancelaciones.</div>
         </div>
         <div class="foot">
@@ -1140,7 +1166,7 @@ function abrirOrden(nro){
   const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
   const items=v.items||[];
   const filasProd = items.length
-    ? items.map(i=>`<tr><td>${i.cant}</td><td>${i.nombre}</td><td class="r">${money(i.precio)}</td><td class="r">${money(i.precio*i.cant)}</td></tr>`).join("")
+    ? items.map(i=>`<tr><td>${i.cant}</td><td>${esc(i.nombre)}</td><td class="r">${money(i.precio)}</td><td class="r">${money(i.precio*i.cant)}</td></tr>`).join("")
     : `<tr><td colspan="4" style="text-align:center;color:#888">Sin ítems cargados en esta venta</td></tr>`;
   const cobrado=granTotal(v)-v.saldo;
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Orden de Venta #${v.nro}</title>
@@ -1165,16 +1191,16 @@ function abrirOrden(nro){
     <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button><button class="btn" style="background:#6b7280" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn" style="background:#2f8f6a" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}</div>
     <div class="brand">AURA MINIPISCINAS</div>
     <h1>Orden de Venta #${v.nro}</h1>
-    <div class="sub">Fecha de venta: ${fmtFechaCorta(v.fecha)} &nbsp;·&nbsp; Vendedor: ${v.vendedor} &nbsp;·&nbsp; Estado: <b>${v.estado}</b></div>
+    <div class="sub">Fecha de venta: ${fmtFechaCorta(v.fecha)} &nbsp;·&nbsp; Vendedor: ${esc(v.vendedor)} &nbsp;·&nbsp; Estado: <b>${esc(v.estado)}</b></div>
 
     <div class="box"><h3>Datos del cliente</h3>
       <div class="grid">
-        <div><span class="lbl">Nombre:</span> <b>${v.cliente}</b></div>
-        <div><span class="lbl">DNI:</span> <b>${c.dni||'—'}</b></div>
-        <div><span class="lbl">Teléfono:</span> <b>${c.tel||'—'}</b></div>
-        <div><span class="lbl">Email:</span> <b>${c.mail||'—'}</b></div>
-        <div><span class="lbl">Localidad:</span> <b>${c.localidad||v.localidad||'—'}</b></div>
-        <div><span class="lbl">Provincia:</span> <b>${c.provincia||'—'}</b></div>
+        <div><span class="lbl">Nombre:</span> <b>${esc(v.cliente)}</b></div>
+        <div><span class="lbl">DNI:</span> <b>${esc(c.dni||'—')}</b></div>
+        <div><span class="lbl">Teléfono:</span> <b>${esc(c.tel||'—')}</b></div>
+        <div><span class="lbl">Email:</span> <b>${esc(c.mail||'—')}</b></div>
+        <div><span class="lbl">Localidad:</span> <b>${esc(c.localidad||v.localidad||'—')}</b></div>
+        <div><span class="lbl">Provincia:</span> <b>${esc(c.provincia||'—')}</b></div>
       </div>
     </div>
 
@@ -1188,7 +1214,7 @@ function abrirOrden(nro){
       </table>
     </div>
 
-    ${v.nota?`<div class="box"><h3>Notas / Observaciones</h3><div style="font-size:14px;white-space:pre-wrap">${(v.nota||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div></div>`:''}
+    ${v.nota?`<div class="box"><h3>Notas / Observaciones</h3><div style="font-size:14px;white-space:pre-wrap">${esc(v.nota)}</div></div>`:''}
 
     <div class="box"><h3>Totales</h3>
       ${v.factura?`<div class="tot"><span>Subtotal (sin IVA)</span><span>${money(v.total)}</span></div>
@@ -1196,7 +1222,7 @@ function abrirOrden(nro){
       <div class="tot"><span>Total con IVA</span><span>${money(granTotal(v))}</span></div>`
       :`<div class="tot"><span>Total</span><span>${money(v.total)}</span></div>`}
       <div class="tot"><span>Cobrado</span><span>${money(cobrado)}</span></div>
-      ${(v.pagos&&v.pagos.length)?`<div style="font-size:12px;color:#6b7280;padding:2px 0 6px">Pagos: ${v.pagos.map(p=>money(p.monto)+(p.metodo?` (${p.metodo})`:'')).join(' · ')}</div>`:''}
+      ${(v.pagos&&v.pagos.length)?`<div style="font-size:12px;color:#6b7280;padding:2px 0 6px">Pagos: ${v.pagos.map(p=>money(p.monto)+(p.metodo?` (${esc(p.metodo)})`:'')).join(' · ')}</div>`:''}
       <div class="tot big"><span>Saldo pendiente</span><span>${money(v.saldo)}</span></div>
     </div>
   </body></html>`;
@@ -1212,7 +1238,7 @@ function abrirRemito(nro){
   const items=v.items||[];
   const piezas=items.reduce((a,i)=>a+(i.cant||0),0);
   const filas = items.length
-    ? items.map(i=>`<tr><td></td><td>${i.nombre}</td><td class="r">${(i.cant||0).toFixed(3)}</td><td class="c">Unidades</td><td class="r">${montoAR(i.precio)}</td><td class="r">0,00</td><td class="r">0,00</td><td class="r">${montoAR(i.precio*i.cant)}</td></tr>`).join("")
+    ? items.map(i=>`<tr><td></td><td>${esc(i.nombre)}</td><td class="r">${(i.cant||0).toFixed(3)}</td><td class="c">Unidades</td><td class="r">${montoAR(i.precio)}</td><td class="r">0,00</td><td class="r">0,00</td><td class="r">${montoAR(i.precio*i.cant)}</td></tr>`).join("")
     : `<tr><td colspan="8" style="text-align:center;color:#888">Sin ítems</td></tr>`;
   const recibido=granTotal(v)-v.saldo;
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Remito — Venta #${v.nro}</title>
@@ -1268,14 +1294,14 @@ function abrirRemito(nro){
     <div class="cap">Correo que recibe el cliente</div>
     <div class="email">
       <div class="marca">Aura Minipiscinas</div>
-      <h1>¡Gracias ${v.cliente}!</h1>
+      <h1>¡Gracias ${esc(v.cliente)}!</h1>
       <p>${fraseEstado(v.estado)}</p>
       <p>Con el botón que se encuentra abajo usted podrá seguir el estado de su orden actualizado.</p>
       <div><span class="verestado">Ver estado</span></div>
       <p class="medio">¡La factura digital colabora con el cuidado del medio ambiente!</p>
       <p class="nota">¡No responder! Este correo no puede recibir mensajes, por este motivo te agradecemos que no respondas este email. Para contactarte con Aura Minipiscinas comunicarse por cualquiera de las vías de contacto mencionadas en la parte inferior de este e-mail.</p>
       <div class="efoot">
-        <div>Vendedor: ${v.vendedor}<br>@Aura.minipiscinas</div>
+        <div>Vendedor: ${esc(v.vendedor)}<br>@Aura.minipiscinas</div>
         <div class="der">Av. Rafael Núñez 3961,<br>X5000 Córdoba</div>
       </div>
       <div class="egen">Mensaje generado por SISTEMAS DE GESTIÓN PARA PYMES</div>
@@ -1291,13 +1317,13 @@ function abrirRemito(nro){
         <div class="rbox"><div class="r">R</div><div class="cod">Cod. 000</div></div>
         <div class="venta">
           <div class="nro">Venta N°${v.nro}</div>
-          <div><b>Vendedor:</b> ${v.vendedor}</div>
+          <div><b>Vendedor:</b> ${esc(v.vendedor)}</div>
           <div><b>Fecha de emisión:</b> ${fmtFechaCorta(v.fecha)}</div>
         </div>
       </div>
       <div class="cli">
         <div><b>CUIT:</b> 0<br><b>Condición frente al IVA:</b> Consumidor Final</div>
-        <div class="der"><b>Apellido y Nombre / Razón Social:</b> ${v.cliente}<br><b>DNI:</b> ${c.dni||'—'} &nbsp; <b>Teléfono:</b> ${c.tel||'—'}</div>
+        <div class="der"><b>Apellido y Nombre / Razón Social:</b> ${esc(v.cliente)}<br><b>DNI:</b> ${esc(c.dni||'—')} &nbsp; <b>Teléfono:</b> ${esc(c.tel||'—')}</div>
       </div>
       <table>
         <thead><tr><th>Código</th><th>Producto / Servicio</th><th class="r">Cantidad</th><th class="c">U. Medida</th><th class="r">Precio unit.</th><th class="r">% Bonif</th><th class="r">Imp. Bonif.</th><th class="r">Subtotal</th></tr></thead>
@@ -1410,10 +1436,10 @@ function abrirCambiarEstado(nro){
       <div class="modal" style="max-width:440px">
         <header><h3>Estado de la venta #${nro}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
-          <div class="field"><label>Cliente</label><div style="font-weight:600;padding:2px 0">${v.cliente}</div></div>
+          <div class="field"><label>Cliente</label><div style="font-weight:600;padding:2px 0">${esc(v.cliente)}</div></div>
           <div class="field" style="margin-top:12px"><label>Estado actual</label><div style="padding:2px 0">${estBadge(v.estado)}</div></div>
           <div class="field" style="margin-top:12px"><label>Nuevo estado <span class="req">*</span></label>
-            <select id="eEstado">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}</select>
+            <select id="eEstado">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select>
           </div>
         </div>
         <div class="foot">
@@ -1484,7 +1510,7 @@ function renderCobros(nro){
           </div>`;
       }
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px dashed var(--linea)">
-          <span><b>${money(p.monto)}</b> <span class="legend">· ${p.metodo||'—'}${p.fecha?` · ${fmtFechaCorta(p.fecha)}`:''}</span></span>
+          <span><b>${money(p.monto)}</b> <span class="legend">· ${esc(p.metodo||'—')}${p.fecha?` · ${fmtFechaCorta(p.fecha)}`:''}</span></span>
           <span><button class="btn btn-ghost btn-sm" title="Editar este cobro" onclick="cobroEditPago(${nro},${i})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este cobro" onclick="cobroDelPago(${nro},${i})">🗑️</button></span>
         </div>`;
     }).join("");
@@ -1505,7 +1531,7 @@ function renderCobros(nro){
       <div class="modal" style="max-width:500px">
         <header><h3>💲 Cobros · Venta #${nro}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
-          <div class="field"><label>Cliente</label><div style="font-weight:600;padding:2px 0">${v.cliente}</div></div>
+          <div class="field"><label>Cliente</label><div style="font-weight:600;padding:2px 0">${esc(v.cliente)}</div></div>
           <h4 style="margin:14px 0 4px;color:#374151">Pagos</h4>
           <div>${lista}</div>
           ${adder}
@@ -1598,7 +1624,7 @@ function abrirEditarVenta(nro){
   $("#modalRoot").innerHTML=`
    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
     <div class="modal" style="max-width:700px">
-     <header><h3>Editar venta #${nro} — ${v.cliente}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <header><h3>Editar venta #${nro} — ${esc(v.cliente)}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
      <div class="body">
        <div class="field" style="max-width:260px"><label>¿Necesita factura? (IVA 21%)</label>
          <select id="edFactura" onchange="editDraft.factura=this.value==='si';editRenderItems()">
@@ -1609,7 +1635,7 @@ function abrirEditarVenta(nro){
        <h4 style="margin:16px 0 6px;color:#374151">Productos</h4>
        <div class="row" style="align-items:end">
          <div class="field" style="flex:3"><label>Agregar producto</label>
-           <select id="edProd"><option value="">Elegí un producto…</option>${activos.map(p=>`<option value="${p.id}">${(p.nombre+(p.desc?' · '+p.desc:'')).replace(/"/g,'&quot;')} — ${money(p.precio)}</option>`).join("")}</select>
+           <select id="edProd"><option value="">Elegí un producto…</option>${activos.map(p=>`<option value="${p.id}">${esc(p.nombre+(p.desc?' · '+p.desc:''))} — ${money(p.precio)}</option>`).join("")}</select>
          </div>
          <div class="field" style="flex:0 0 80px"><label>Cant.</label><input type="number" id="edCant" value="1" min="1"></div>
          <button class="btn btn-green" onclick="editAddItem()">＋ Agregar</button>
@@ -1625,7 +1651,7 @@ function abrirEditarVenta(nro){
        </div>
 
        <h4 style="margin:16px 0 6px;color:#374151">Nota / observación</h4>
-       <textarea id="edNota" placeholder="Observaciones de la venta…">${(editDraft.nota||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+       <textarea id="edNota" placeholder="Observaciones de la venta…">${esc(editDraft.nota)}</textarea>
 
        <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:16px" id="edTotales"></div>
      </div>
@@ -1654,8 +1680,8 @@ function editRenderItems(){
     const base=i.precio*i.cant, iva=editDraft.factura?base*IVA_PCT:0;
     const ci=`<input type="number" min="1" value="${i.cant}" style="width:64px;padding:5px" onchange="editSetCant(${idx},this.value)">`;
     return editDraft.factura
-      ? `<tr><td>${ci}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`
-      : `<tr><td>${ci}</td><td>${i.nombre}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`;
+      ? `<tr><td>${ci}</td><td>${esc(i.nombre)}</td><td>${money(i.precio)}</td><td>${money(iva)}</td><td>${money(base+iva)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`
+      : `<tr><td>${ci}</td><td>${esc(i.nombre)}</td><td>${money(i.precio)}</td><td>${money(base)}</td><td><button class="btn btn-ghost btn-sm" onclick="editDelItem(${idx})">🗑️</button></td></tr>`;
   }).join("");
   editRenderTotales();
 }
@@ -1689,7 +1715,7 @@ function editSaveNuevoPago(idx){
 function editRenderPagos(){
   const c=$("#edPagos"); if(!c) return;
   const prev=editDraft.pagosPrevios.length
-    ? editDraft.pagosPrevios.map(p=>`<div class="l" style="padding:5px 0"><span>${fmtFechaCorta(p.fecha)} · ${p.metodo||'Pago'}</span><b>${money(p.monto)}</b></div>`).join("")
+    ? editDraft.pagosPrevios.map(p=>`<div class="l" style="padding:5px 0"><span>${fmtFechaCorta(p.fecha)} · ${esc(p.metodo||'Pago')}</span><b>${money(p.monto)}</b></div>`).join("")
     : `<div class="l" style="padding:5px 0"><span>Cobrado inicial</span><b>${money(editDraft.cobradoPrevio)}</b></div>`;
   const METP=['Efectivo','Transferencia','Tarjeta','Cuenta corriente'];
   const nuevos=editDraft.nuevosPagos.map((p,idx)=>{
@@ -1701,7 +1727,7 @@ function editRenderPagos(){
         <button class="btn btn-ghost btn-sm" onclick="editCancelNuevoPago()">Cancelar</button>
       </div>`;
     }
-    return `<div class="l" style="padding:5px 0;color:var(--ok)"><span>＋ ${p.metodo} (nuevo)</span><span><b>${money(p.monto)}</b> <button class="btn btn-ghost btn-sm" title="Editar este pago" onclick="editEditNuevoPago(${idx})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este pago" onclick="editDelNuevoPago(${idx})">🗑️</button></span></div>`;
+    return `<div class="l" style="padding:5px 0;color:var(--ok)"><span>＋ ${esc(p.metodo)} (nuevo)</span><span><b>${money(p.monto)}</b> <button class="btn btn-ghost btn-sm" title="Editar este pago" onclick="editEditNuevoPago(${idx})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este pago" onclick="editDelNuevoPago(${idx})">🗑️</button></span></div>`;
   }).join("");
   c.innerHTML=prev+nuevos;
 }
@@ -1747,9 +1773,9 @@ function abrirReenviar(nro){
   $("#modalRoot").innerHTML=`
    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
     <div class="modal" style="max-width:470px">
-     <header><h3>Reenviar a ${v.cliente}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <header><h3>Reenviar a ${esc(v.cliente)}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
      <div class="body">
-       <p style="font-size:14px;line-height:1.5">Correo del cliente: <b>${mail||'—'}</b></p>
+       <p style="font-size:14px;line-height:1.5">Correo del cliente: <b>${esc(mail||'—')}</b></p>
        ${!mail?`<div class="help" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;margin-top:10px">Este cliente no tiene email cargado. Editá el cliente para poder reenviarle.</div>`:`
        <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
          <button class="btn btn-green" style="justify-content:center" onclick="reenviarComprobante(${nro})">📄 Reenviar comprobante (remito PDF)</button>
@@ -1790,8 +1816,8 @@ function renderEstadoRows(){
   cont.innerHTML=estadoDraft.map((e,i)=>{
     const c=COLORES[e.color]||COLORES.gris;
     return `<div class="row" data-i="${i}" style="gap:8px;align-items:center;margin-bottom:8px">
-      <span class="estPrev badge" style="background:${c.bg};color:${c.fg};min-width:96px;text-align:center">${e.nombre||'—'}</span>
-      <input class="estNombre" value="${(e.nombre||'').replace(/"/g,'&quot;')}" placeholder="Nombre del estado" style="flex:2"
+      <span class="estPrev badge" style="background:${c.bg};color:${c.fg};min-width:96px;text-align:center">${esc(e.nombre||'—')}</span>
+      <input class="estNombre" value="${esc(e.nombre)}" placeholder="Nombre del estado" style="flex:2"
              oninput="this.closest('.row').querySelector('.estPrev').textContent=this.value||'—'">
       <select class="estColor" style="flex:1;max-width:120px" onchange="syncDraftFromDom();renderEstadoRows()">
         ${Object.keys(COLORES).map(k=>`<option value="${k}" ${e.color===k?'selected':''}>${k}</option>`).join("")}
@@ -1841,8 +1867,8 @@ function viewClientes(){
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <span class="legend" id="cliCount"></span>
-          <input class="search" placeholder="🔍 Nombre, DNI, teléfono, email, localidad…" value="${(cliQuery||'').replace(/"/g,'&quot;')}" oninput="cliQuery=this.value;renderCliTabla()">
-          <select style="max-width:190px" onchange="cliProv=this.value;renderCliTabla()"><option value="">Todas las provincias</option>${provincias.map(p=>`<option ${cliProv===p?'selected':''}>${p}</option>`).join("")}</select>
+          <input class="search" placeholder="🔍 Nombre, DNI, teléfono, email, localidad…" value="${esc(cliQuery)}" oninput="cliQuery=this.value;renderCliTabla()">
+          <select style="max-width:190px" onchange="cliProv=this.value;renderCliTabla()"><option value="">Todas las provincias</option>${provincias.map(p=>`<option ${cliProv===p?'selected':''}>${esc(p)}</option>`).join("")}</select>
           <select style="max-width:160px" onchange="cliEstado=this.value;renderCliTabla()"><option value="" ${cliEstado===''?'selected':''}>Todos</option><option value="activo" ${cliEstado==='activo'?'selected':''}>Solo activos</option><option value="inactivo" ${cliEstado==='inactivo'?'selected':''}>Solo inactivos</option></select>
         </div>
         ${gestor?`<button class="btn btn-blue btn-sm" onclick="abrirModalCliente('clientes')">＋ Nuevo Cliente</button>`:''}
@@ -1859,7 +1885,7 @@ function viewClientes(){
 function renderCliTabla(){
   const tb=$("#tCli"); if(!tb) return; const gestor=puede('gestionar_clientes');
   const rows=cliFiltrados(); const cnt=$("#cliCount"); if(cnt) cnt.textContent=`${rows.length} de ${CLIENTES.length}`;
-  tb.innerHTML=rows.length?rows.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${c.nombre} ${c.apellido||''}</b></td><td>${c.dni||'—'}</td><td>${c.tel||'—'}</td><td>${c.mail||'—'}</td><td>${c.localidad||'—'}</td><td>${c.provincia||'—'}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?9:8}" class="empty">Sin clientes con estos filtros.</td></tr>`;
+  tb.innerHTML=rows.length?rows.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${esc(c.nombre)} ${esc(c.apellido)}</b></td><td>${esc(c.dni||'—')}</td><td>${esc(c.tel||'—')}</td><td>${esc(c.mail||'—')}</td><td>${esc(c.localidad||'—')}</td><td>${esc(c.provincia||'—')}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?9:8}" class="empty">Sin clientes con estos filtros.</td></tr>`;
 }
 function toggleCliente(id){
   if(!puede('gestionar_clientes')){ toast("No tenés permiso"); return; }
@@ -1891,10 +1917,10 @@ function viewProductos(){
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <span class="legend" id="prodCount"></span>
-          <input class="search" placeholder="🔍 Nombre, descripción, categoría…" value="${(prodQuery||'').replace(/"/g,'&quot;')}" oninput="prodQuery=this.value;renderProdTabla()">
+          <input class="search" placeholder="🔍 Nombre, descripción, categoría…" value="${esc(prodQuery)}" oninput="prodQuery=this.value;renderProdTabla()">
           <select style="max-width:200px" onchange="prodCatFiltro=this.value;renderProdTabla()">
             <option value="">Todas las categorías</option>
-            ${CATEGORIAS.map(c=>`<option ${prodCatFiltro===c?'selected':''}>${c}</option>`).join("")}
+            ${CATEGORIAS.map(c=>`<option ${prodCatFiltro===c?'selected':''}>${esc(c)}</option>`).join("")}
           </select>
           <select style="max-width:170px" onchange="prodEstado=this.value;renderProdTabla()">
             <option value="" ${prodEstado===''?'selected':''}>Todos los estados</option>
@@ -1923,9 +1949,9 @@ function renderProdTabla(){
   const filtrados=prodFiltrados();
   const cnt=$("#prodCount"); if(cnt) cnt.textContent=`${filtrados.length} de ${PRODUCTOS.length}`;
   tb.innerHTML=filtrados.length?filtrados.map(p=>{
-    const stockTxt = (p.stock===''||p.stock==null)?'No Desc':p.stock;
+    const stockTxt = esc((p.stock===''||p.stock==null)?'No Desc':p.stock);
     const stockCell = p.descStock ? `${stockTxt} <span class="cont cont-ok" title="Descuenta stock automáticamente">auto</span>` : stockTxt;
-    return `<tr class="${p.activo===false?'inactivo':''}"><td><b>${p.nombre}</b></td><td>${p.desc||'—'}</td><td>${p.cat||'—'}</td><td><b>${money(p.precio)}</b></td>${gestor?`<td>${(p.costo!=null&&p.costo!=='')?money(p.costo):'—'}</td>`:''}<td>${stockCell}</td><td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
+    return `<tr class="${p.activo===false?'inactivo':''}"><td><b>${esc(p.nombre)}</b></td><td>${esc(p.desc||'—')}</td><td>${esc(p.cat||'—')}</td><td><b>${money(p.precio)}</b></td>${gestor?`<td>${(p.costo!=null&&p.costo!=='')?money(p.costo):'—'}</td>`:''}<td>${stockCell}</td><td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
   }).join(""):`<tr><td colspan="${cols}" class="empty">Sin productos con estos filtros.</td></tr>`;
 }
 
@@ -1941,18 +1967,18 @@ function abrirModalProducto(id){
         <header><h3>${ed?'Editar producto':'Nuevo producto'}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
           <div class="row">
-            <div class="field" style="flex:2"><label>Nombre <span class="req">*</span></label><input id="pNombre" value="${ed?(p.nombre||'').replace(/"/g,'&quot;'):''}" placeholder="Ej. Minipiscina 370"></div>
-            <div class="field"><label>Descripción</label><input id="pDesc" value="${ed?(p.desc||'').replace(/"/g,'&quot;'):''}" placeholder="Color, detalle…"></div>
+            <div class="field" style="flex:2"><label>Nombre <span class="req">*</span></label><input id="pNombre" value="${ed?esc(p.nombre):''}" placeholder="Ej. Minipiscina 370"></div>
+            <div class="field"><label>Descripción</label><input id="pDesc" value="${ed?esc(p.desc):''}" placeholder="Color, detalle…"></div>
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field"><label>Categoría <span class="req">*</span></label>
-              <select id="pCat"><option value="">Seleccionar…</option>${CATEGORIAS.map(c=>`<option ${ed&&p.cat===c?'selected':''}>${c}</option>`).join("")}</select>
+              <select id="pCat"><option value="">Seleccionar…</option>${CATEGORIAS.map(c=>`<option ${ed&&p.cat===c?'selected':''}>${esc(c)}</option>`).join("")}</select>
             </div>
             <div class="field"><label>Precio (venta) <span class="req">*</span></label><input id="pPrecio" type="number" value="${ed?p.precio:''}" placeholder="0" ${precioBloqueado?'readonly title="Solo el Maestro o quien tenga el permiso puede editar precios" style="background:#f3f4f6"':''}></div>
             <div class="field"><label>Costo</label><input id="pCosto" type="number" value="${ed&&p.costo!=null?p.costo:''}" placeholder="0"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>Stock</label><input id="pStock" value="${ed?(p.stock===''||p.stock==null?'No Desc':p.stock):'No Desc'}" placeholder="No Desc o un número"></div>
+            <div class="field"><label>Stock</label><input id="pStock" value="${ed?esc(p.stock===''||p.stock==null?'No Desc':p.stock):'No Desc'}" placeholder="No Desc o un número"></div>
             <div class="field"><label>Descuenta stock automáticamente</label>
               <select id="pDescStock">
                 <option value="no" ${ed&&p.descStock?'':'selected'}>No</option>
@@ -2014,7 +2040,7 @@ function abrirGestionCategorias(){
 function renderCatRows(){
   const c=$("#catList"); if(!c) return;
   c.innerHTML=catDraft.map((nom,i)=>`<div class="row" data-i="${i}" style="gap:8px;align-items:center;margin-bottom:8px">
-    <input class="catNombre" value="${(nom||'').replace(/"/g,'&quot;')}" placeholder="Nombre de la categoría" style="flex:2">
+    <input class="catNombre" value="${esc(nom)}" placeholder="Nombre de la categoría" style="flex:2">
     <button class="btn btn-ghost btn-sm" title="Quitar" onclick="delCatRow(${i})">🗑️</button>
   </div>`).join("");
 }
@@ -2047,7 +2073,7 @@ function viewUsuarios(){
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <span class="legend" id="usrCount"></span>
-          <input class="search" placeholder="🔍 Nombre, usuario, rol…" value="${(usrQuery||'').replace(/"/g,'&quot;')}" oninput="usrQuery=this.value;renderUsrTabla()">
+          <input class="search" placeholder="🔍 Nombre, usuario, rol…" value="${esc(usrQuery)}" oninput="usrQuery=this.value;renderUsrTabla()">
           <select style="max-width:180px" onchange="usrRol=this.value;renderUsrTabla()"><option value="">Todos los roles</option>${ROLES.map(r=>`<option ${usrRol===r?'selected':''}>${r}</option>`).join("")}</select>
         </div>
         <div style="display:flex;gap:8px">
@@ -2057,7 +2083,7 @@ function viewUsuarios(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>Apellido</th><th>Usuario</th><th>Rol</th><th>Contraseña</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <thead><tr><th>Nombre</th><th>Apellido</th><th>Usuario</th><th>Rol</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
         <tbody id="tUsr"></tbody>
       </table>
       </div>
@@ -2067,7 +2093,7 @@ function viewUsuarios(){
 function renderUsrTabla(){
   const tb=$("#tUsr"); if(!tb) return; const gestor=puede('gestionar_usuarios');
   const rows=usrFiltrados(); const cnt=$("#usrCount"); if(cnt) cnt.textContent=`${rows.length} de ${USUARIOS.length}`;
-  tb.innerHTML=rows.length?rows.map(({u,i})=>`<tr class="${u.activo?'':'inactivo'}"><td>${u.nombre}</td><td>${u.ap}</td><td>${u.user}</td><td><b>${u.rol}</b></td><td>${u.pass?'••••••':'—'}</td><td>${u.activo?'<span class="badge b-ent">Activo</span>':'<span class="badge b-pend">Inactivo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalUsuario(${i})">✏️</button><button class="btn btn-ghost btn-sm" title="${u.activo?'Inactivar':'Activar'}" onclick="toggleUsuario(${i})">${u.activo?'🟢':'⚪'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?7:6}" class="empty">Sin usuarios con estos filtros.</td></tr>`;
+  tb.innerHTML=rows.length?rows.map(({u,i})=>`<tr class="${u.activo?'':'inactivo'}"><td>${esc(u.nombre)}</td><td>${esc(u.ap)}</td><td>${esc(u.user)}</td><td><b>${esc(u.rol)}</b></td><td>${u.activo?'<span class="badge b-ent">Activo</span>':'<span class="badge b-pend">Inactivo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalUsuario(${i})">✏️</button><button class="btn btn-ghost btn-sm" title="${u.activo?'Inactivar':'Activar'}" onclick="toggleUsuario(${i})">${u.activo?'🟢':'⚪'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?6:5}" class="empty">Sin usuarios con estos filtros.</td></tr>`;
 }
 
 /* ====== PANEL DE PERMISOS POR ROL (configurable) ====== */
@@ -2120,12 +2146,12 @@ function abrirModalUsuario(i){
         <header><h3>${ed?'Editar usuario':'Nuevo usuario'}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
         <div class="body">
           <div class="row">
-            <div class="field"><label>Nombre <span class="req">*</span></label><input id="uNombre" value="${ed?(u.nombre||'').replace(/"/g,'&quot;'):''}"></div>
-            <div class="field"><label>Apellido <span class="req">*</span></label><input id="uAp" value="${ed?(u.ap||'').replace(/"/g,'&quot;'):''}"></div>
+            <div class="field"><label>Nombre <span class="req">*</span></label><input id="uNombre" value="${ed?esc(u.nombre):''}"></div>
+            <div class="field"><label>Apellido <span class="req">*</span></label><input id="uAp" value="${ed?esc(u.ap):''}"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>Usuario (con el que inicia sesión) <span class="req">*</span></label><input id="uUser" type="text" value="${ed?(u.user||'').replace(/"/g,'&quot;'):''}" placeholder="ej: noe-aura"></div>
-            <div class="field"><label>Contraseña <span class="req">*</span></label><input id="uPass" type="password" value="${ed?(u.pass||''):''}" placeholder="••••••"></div>
+            <div class="field"><label>Usuario (con el que inicia sesión) <span class="req">*</span></label><input id="uUser" type="text" value="${ed?esc(u.user):''}" placeholder="ej: noe-aura"></div>
+            <div class="field"><label>Contraseña ${ed?'':'<span class="req">*</span>'}</label><input id="uPass" type="password" value="" autocomplete="new-password" placeholder="${ed?'Dejala vacía para no cambiarla':'Mínimo 6 caracteres'}"></div>
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field"><label>Rol <span class="req">*</span></label>
@@ -2135,7 +2161,7 @@ function abrirModalUsuario(i){
               <select id="uActivo"><option value="1" ${(!ed||u.activo)?'selected':''}>Activo</option><option value="0" ${ed&&!u.activo?'selected':''}>Inactivo</option></select>
             </div>
           </div>
-          <div class="help">La contraseña le sirve al usuario para iniciar sesión. Se guarda enmascarada y no se muestra en la lista.</div>
+          <div class="help">${ed?'Para <b>cambiarle la contraseña</b>, escribí una nueva (mínimo 6 caracteres). Si dejás el campo vacío, la contraseña actual no se toca.':'La contraseña le sirve al usuario para iniciar sesión (mínimo 6 caracteres).'} Las contraseñas se guardan encriptadas: nadie, ni el Maestro, puede verlas.</div>
         </div>
         <div class="foot">
           <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
@@ -2185,9 +2211,9 @@ function viewAuditoria(){
       <div class="row" style="align-items:end">
         <div class="field" style="flex:0 0 150px"><label>Desde</label><input type="date" value="${audDesde}" onchange="audDesde=this.value;renderAudTabla()"></div>
         <div class="field" style="flex:0 0 150px"><label>Hasta</label><input type="date" value="${audHasta}" onchange="audHasta=this.value;renderAudTabla()"></div>
-        <div class="field"><label>Acción</label><select onchange="audAccion=this.value;renderAudTabla()"><option value="">Todas las acciones</option>${acciones.map(a=>`<option ${audAccion===a?'selected':''}>${a}</option>`).join("")}</select></div>
+        <div class="field"><label>Acción</label><select onchange="audAccion=this.value;renderAudTabla()"><option value="">Todas las acciones</option>${acciones.map(a=>`<option ${audAccion===a?'selected':''}>${esc(a)}</option>`).join("")}</select></div>
         <div style="flex:1;min-width:10px"></div>
-        <input class="search" placeholder="🔍 Usuario, acción, detalle…" value="${(audQuery||'').replace(/"/g,'&quot;')}" oninput="audQuery=this.value;renderAudTabla()">
+        <input class="search" placeholder="🔍 Usuario, acción, detalle…" value="${esc(audQuery)}" oninput="audQuery=this.value;renderAudTabla()">
       </div>
     </div>
     <div class="card">
@@ -2202,7 +2228,7 @@ function viewAuditoria(){
 function renderAudTabla(){
   const tb=$("#tAud"); if(!tb) return;
   const rows=audFiltradas(); const cnt=$("#audCount"); if(cnt) cnt.textContent=`${rows.length} registro(s)`;
-  tb.innerHTML=rows.length?rows.map(l=>`<tr><td style="white-space:nowrap">${fmtFechaHora(l.creado)}</td><td>${l.usuario||'—'}</td><td>${l.rol||''}</td><td><b>${l.accion||''}</b>${l.entidad?` <small class="legend">${l.entidad}${l.entidad_id?' #'+l.entidad_id:''}</small>`:''}</td><td>${(l.detalle||'').replace(/</g,'&lt;')}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">Sin registros con estos filtros.</td></tr>`;
+  tb.innerHTML=rows.length?rows.map(l=>`<tr><td style="white-space:nowrap">${fmtFechaHora(l.creado)}</td><td>${esc(l.usuario||'—')}</td><td>${esc(l.rol)}</td><td><b>${esc(l.accion)}</b>${l.entidad?` <small class="legend">${esc(l.entidad)}${l.entidad_id?' #'+esc(l.entidad_id):''}</small>`:''}</td><td>${esc(l.detalle)}</td></tr>`).join(""):`<tr><td colspan="5" class="empty">Sin registros con estos filtros.</td></tr>`;
 }
 function exportarAuditoria(){
   if(!puede('exportar')){ toast("No tenés permiso para exportar"); return; }
@@ -2322,10 +2348,10 @@ function htmlRepProductos(){
       <div class="row" style="align-items:end">
         <div class="field" style="flex:0 0 140px"><label>Desde</label><input type="date" value="${repDesde}" onchange="repDesde=this.value;renderRepBody()"></div>
         <div class="field" style="flex:0 0 140px"><label>Hasta</label><input type="date" value="${repHasta}" onchange="repHasta=this.value;renderRepBody()"></div>
-        <div class="field"><label>Provincia</label><select onchange="repProv=this.value;renderRepBody()"><option value="">Todas</option>${provinciasRep().map(p=>`<option ${repProv===p?'selected':''}>${p}</option>`).join("")}</select></div>
-        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${c}</option>`).join("")}</select></div>
-        <div class="field"><label>Vendedor</label><select onchange="repVend=this.value;renderRepBody()"><option value="">Todos</option>${vendedoresRep().map(v=>`<option ${repVend===v?'selected':''}>${v}</option>`).join("")}</select></div>
-        <div class="field"><label>Estado</label><select onchange="repEstado=this.value;renderRepBody()"><option value="">Todos</option>${ESTADOS.map(e=>`<option ${repEstado===e.nombre?'selected':''}>${e.nombre}</option>`).join("")}</select></div>
+        <div class="field"><label>Provincia</label><select onchange="repProv=this.value;renderRepBody()"><option value="">Todas</option>${provinciasRep().map(p=>`<option ${repProv===p?'selected':''}>${esc(p)}</option>`).join("")}</select></div>
+        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
+        <div class="field"><label>Vendedor</label><select onchange="repVend=this.value;renderRepBody()"><option value="">Todos</option>${vendedoresRep().map(v=>`<option ${repVend===v?'selected':''}>${esc(v)}</option>`).join("")}</select></div>
+        <div class="field"><label>Estado</label><select onchange="repEstado=this.value;renderRepBody()"><option value="">Todos</option>${ESTADOS.map(e=>`<option ${repEstado===e.nombre?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
       </div>
       <div class="legend" style="margin-top:10px">Podés combinar todos los filtros: provincia + fecha, provincia + vendedor, fecha + estado, provincia + estado + vendedor, etc.</div>
@@ -2345,16 +2371,16 @@ function htmlRepProductos(){
     <div class="grid2">
       <div class="card">
         <h3 style="margin-bottom:12px">Ranking de productos · ${esU?'unidades':'facturación'}</h3>
-        <table><tbody>${rankP.slice(0,12).map(r=>`<tr><td style="width:40%"><b>${r.k}</b><br><small class="legend">${r.cat}</small></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(val(r))/maxP*100}%;min-width:2px"></div><span>${fmt(val(r))}</span></div></td></tr>`).join("")||`<tr><td class="empty">Sin datos en el período</td></tr>`}</tbody></table>
+        <table><tbody>${rankP.slice(0,12).map(r=>`<tr><td style="width:40%"><b>${esc(r.k)}</b><br><small class="legend">${esc(r.cat)}</small></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(val(r))/maxP*100}%;min-width:2px"></div><span>${fmt(val(r))}</span></div></td></tr>`).join("")||`<tr><td class="empty">Sin datos en el período</td></tr>`}</tbody></table>
       </div>
       <div>
         <div class="card">
           <h3 style="margin-bottom:12px">Por vendedor</h3>
-          <table><tbody>${rankV.map(r=>`<tr><td style="width:42%"><b>${r.k}</b></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(val(r))/maxV*100}%;min-width:2px;background:var(--azul)"></div><span>${fmt(val(r))}</span></div></td></tr>`).join("")}</tbody></table>
+          <table><tbody>${rankV.map(r=>`<tr><td style="width:42%"><b>${esc(r.k)}</b></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(val(r))/maxV*100}%;min-width:2px;background:var(--azul)"></div><span>${fmt(val(r))}</span></div></td></tr>`).join("")}</tbody></table>
         </div>
         <div class="card">
           <h3 style="margin-bottom:12px">Por categoría</h3>
-          <table><thead><tr><th>Categoría</th><th>Unidades</th><th>Facturación</th></tr></thead><tbody>${rankC.map(r=>`<tr><td><b>${r.k}</b></td><td>${r.u.toLocaleString("es-AR")}</td><td>${money(r.m)}</td></tr>`).join("")}</tbody></table>
+          <table><thead><tr><th>Categoría</th><th>Unidades</th><th>Facturación</th></tr></thead><tbody>${rankC.map(r=>`<tr><td><b>${esc(r.k)}</b></td><td>${r.u.toLocaleString("es-AR")}</td><td>${money(r.m)}</td></tr>`).join("")}</tbody></table>
         </div>
       </div>
     </div>`;
@@ -2372,7 +2398,7 @@ function htmlRepComparativa(){
   return `
     <div class="card">
       <div class="row" style="align-items:end">
-        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${c}</option>`).join("")}</select></div>
+        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
       </div>
     </div>
@@ -2419,7 +2445,7 @@ function htmlRepTermometro(){
       <div class="row" style="align-items:end">
         <div class="field"><label>Mes a comparar (2026 vs 2025)</label><select onchange="repMes=+this.value;renderRepBody()">${MESES_L.map((mn,i)=>`<option value="${i}" ${i===mes?'selected':''}>${mn}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
-        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${c}</option>`).join("")}</select></div>
+        <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
       </div>
     </div>
     <div class="grid2">
@@ -2439,7 +2465,7 @@ function htmlRepTermometro(){
       </div>
       <div class="card">
         <h3 style="margin-bottom:12px">Ventas por provincia · 2026 ${repCat?'· '+repCat:''}</h3>
-        <table><tbody>${rankProv.map(r=>{const d=r.ant?Math.round((r.v-r.ant)/r.ant*100):(r.v>0?100:0);return `<tr><td style="width:32%"><b>${r.p}</b></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(r.v)/maxProv*100}%;min-width:2px"></div><span>${esU?r.v.toLocaleString("es-AR")+' u':money(r.v)}</span></div></td><td style="text-align:right;white-space:nowrap"><b style="color:${d>=0?'var(--ok)':'var(--rojo)'}">${d>=0?'+':''}${d}%</b> <small class="legend">vs 25</small></td></tr>`;}).join("")}</tbody></table>
+        <table><tbody>${rankProv.map(r=>{const d=r.ant?Math.round((r.v-r.ant)/r.ant*100):(r.v>0?100:0);return `<tr><td style="width:32%"><b>${esc(r.p)}</b></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(r.v)/maxProv*100}%;min-width:2px"></div><span>${esU?r.v.toLocaleString("es-AR")+' u':money(r.v)}</span></div></td><td style="text-align:right;white-space:nowrap"><b style="color:${d>=0?'var(--ok)':'var(--rojo)'}">${d>=0?'+':''}${d}%</b> <small class="legend">vs 25</small></td></tr>`;}).join("")}</tbody></table>
       </div>
     </div>`;
 }
@@ -2449,6 +2475,13 @@ function htmlRepTermometro(){
   const bi=$(".brand-img"), ll=$("#loginLogo"); if(bi&&ll) ll.src=bi.src;
   const u=$("#logUser"); if(u) u.focus();
 })();
+/* Si conexion.js no llegó a cargar, la app no puede funcionar: avisamos en la
+   pantalla de login en vez de dejar que alguien crea que entró al sistema real. */
+window.addEventListener("load", function(){
+  if(window.SISTEMA_CONECTADO) return;
+  const e=$("#logErr");
+  if(e){ e.style.color="var(--rojo)"; e.textContent="⚠️ No se pudo cargar la conexión con la base de datos. Recargá la página (Cmd/Ctrl + Shift + R); si sigue igual, avisá al administrador."; }
+});
 </script>
 <script src="conexion.js"></script>
 </body>

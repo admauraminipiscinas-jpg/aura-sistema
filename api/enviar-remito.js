@@ -155,6 +155,14 @@ function emailHTML(v, tipo) {
 }
 
 
+/* Fecha de emisión en hora de Argentina (el servidor corre en UTC) */
+function hoyAR() {
+  const p = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', year: 'numeric'
+  }).formatToParts(new Date()).reduce((a, x) => (a[x.type] = x.value, a), {});
+  return `${p.day}/${p.month}/${p.year}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
   try {
@@ -163,8 +171,42 @@ export default async function handler(req, res) {
     const { data: u, error: ue } = await admin.auth.getUser(token);
     if (ue || !u || !u.user) return res.status(401).json({ error: 'Sesión no válida' });
 
-    const { venta, soloRemito, tipo } = req.body || {};
-    if (!venta || !venta.email) return res.status(400).json({ error: 'Falta el email del cliente' });
+    // Solo usuarios con perfil activo pueden mandar correos con la marca Aura
+    const { data: perfil } = await admin.from('perfiles').select('rol, activo').eq('id', u.user.id).single();
+    if (!perfil || perfil.activo === false) return res.status(403).json({ error: 'Usuario sin acceso' });
+
+    const { nro, soloRemito, tipo } = req.body || {};
+    if (!nro) return res.status(400).json({ error: 'Falta el número de venta' });
+
+    /* El remito se arma con los datos REALES de la base, no con lo que mande el
+       navegador: así nadie puede usar este endpoint para mandar correos con la
+       marca de Aura a direcciones arbitrarias ni con importes inventados. */
+    const { data: vRow, error: vErr } = await admin.from('ventas').select('*').eq('id', nro).single();
+    if (vErr || !vRow) return res.status(404).json({ error: 'La venta no existe' });
+
+    const { data: itemsRow } = await admin.from('venta_items').select('*').eq('venta_id', nro);
+    const { data: cli } = vRow.cliente_id
+      ? await admin.from('clientes').select('*').eq('id', vRow.cliente_id).single()
+      : { data: null };
+
+    if (!cli || !cli.email) return res.status(400).json({ error: 'El cliente no tiene email cargado' });
+
+    const venta = {
+      nro: vRow.id,
+      cliente: vRow.cliente_nombre || `${cli.nombre || ''} ${cli.apellido || ''}`.trim(),
+      dni: cli.dni || '',
+      telefono: cli.telefono || '',
+      localidad: `${cli.localidad || ''}${cli.provincia ? ` (${cli.provincia})` : ''}`,
+      vendedor: vRow.vendedor || '',
+      fecha: hoyAR(),
+      estado: vRow.estado || '',
+      total: Number(vRow.total || 0),
+      iva: Number(vRow.iva || 0),
+      factura: vRow.factura === true,
+      saldo: Number(vRow.saldo || 0),
+      email: cli.email,
+      items: (itemsRow || []).map(i => ({ nombre: i.nombre, precio: Number(i.precio || 0), cant: i.cantidad }))
+    };
 
     // Adjunto 1: remito generado
     const pdf = generarPDF(venta);
@@ -193,7 +235,7 @@ export default async function handler(req, res) {
       html: emailHTML(venta, tipo),
       attachments
     });
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, email: cli.email });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
