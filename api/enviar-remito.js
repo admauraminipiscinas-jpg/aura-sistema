@@ -95,7 +95,7 @@ function generarPDF(v) {
   y += 16; doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
   doc.text('Documento no válido como factura', M, y);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text('Aura Minipiscinas — Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas', W / 2, H - 28, { align: 'center' });
+  doc.text('Aura Minipiscinas — @aura.minipiscinas — adm.auraminipiscinas@gmail.com', W / 2, H - 28, { align: 'center' });
   return Buffer.from(doc.output('arraybuffer'));
 }
 

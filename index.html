@@ -310,7 +310,8 @@ const PERMISOS_LISTA = [
   {k:"ver_vender",         t:"Acceder a Vender (cargar ventas)"},
   {k:"ver_ventas",         t:"Acceder a Gestión de Ventas"},
   {k:"ver_clientes",       t:"Acceder a Clientes"},
-  {k:"ver_productos",      t:"Acceder a Productos"},
+  {k:"ver_productos",      t:"Acceder a Productos (nombre, descripción, categoría y precio)"},
+  {k:"ver_stock",          t:"Ver además la columna Stock en Productos"},
   {k:"ver_usuarios",       t:"Acceder a Usuarios"},
   {k:"ver_reportes",       t:"Acceder a Reportes"},
   {k:"ver_auditoria",      t:"Acceder a Auditoría / Historial"},
@@ -326,9 +327,9 @@ const PERMISOS_LISTA = [
 ];
 /* Valores por defecto (se sobreescriben con lo guardado en la base) */
 const PERMISOS_DEFAULT = {
-  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:1,ver_productos:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
-  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
-  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
+  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:1,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
+  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_stock:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
+  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
 };
 let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
@@ -461,7 +462,7 @@ function viewVender(){
         <div class="card">
           <div class="toolbar" style="margin-bottom:10px">
             <h3>Cliente</h3>
-            <span class="legend">Buscá si ya compró antes, o cargalo como nuevo</span>
+            <span class="legend">Todos los clientes son nuevos</span>
           </div>
           <div id="clienteBox"></div>
           <div class="row" style="margin-top:14px">
@@ -552,17 +553,9 @@ function renderClienteBox(){
   const box = $("#clienteBox"); if(!box) return;
   if(!clienteActual){
     box.innerHTML = `
-      <div class="cli-empty" style="flex-direction:column;align-items:stretch;gap:10px">
-        <span class="legend">Buscá al comprador por nombre, DNI, teléfono o email. Si es la primera vez que compra, cargalo como cliente nuevo. El remito se envía al correo que figure en su ficha.</span>
-        <div class="row" style="align-items:end">
-          <div class="field" style="flex:3;position:relative;min-width:0">
-            <input id="vCliBuscar" autocomplete="off" placeholder="🔍 Escribí 3+ letras: nombre, DNI, teléfono o email…"
-                   oninput="filtrarClientes(this.value)" onfocus="filtrarClientes(this.value)"
-                   onblur="setTimeout(()=>{const b=$('#vCliSug');if(b)b.classList.remove('show')},200)">
-            <div id="vCliSug" class="sug"></div>
-          </div>
-          <button class="btn btn-greenlight btn-sm" onclick="abrirModalCliente('venta')">＋ Cliente nuevo</button>
-        </div>
+      <div class="cli-empty">
+        <span class="legend">Cargá los datos del comprador para poder vender. El remito se enviará al correo que indiques.</span>
+        <button class="btn btn-greenlight btn-sm" onclick="abrirModalCliente('venta')">＋ Cargar cliente</button>
       </div>`;
     return;
   }
@@ -581,24 +574,6 @@ function renderClienteBox(){
         <button class="btn btn-ghost btn-sm" onclick="cambiarCliente()">🔁 Cambiar</button>
       </div>
     </div>`;
-}
-
-/* Buscador de clientes ya cargados (evita duplicar al que ya compró antes) */
-function filtrarClientes(q){
-  const box=$("#vCliSug"); if(!box) return;
-  q=(q||"").trim().toLowerCase();
-  if(q.length<3){ box.classList.remove("show"); box.innerHTML=""; return; }
-  const activos=CLIENTES.filter(c=>c.activo!==false);
-  const m=activos.filter(c=>((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')).toLowerCase().includes(q)).slice(0,8);
-  box.innerHTML = m.length
-    ? m.map(c=>`<div class="it" onmousedown="elegirCliente(${c.id})"><b>${esc(c.nombre)} ${esc(c.apellido)}</b> <small>· DNI ${esc(c.dni||'—')}</small><br><small>${esc(c.localidad||'')}${c.provincia?` (${esc(c.provincia)})`:''} — ${esc(c.mail||'sin email')}</small></div>`).join("")
-    : `<div class="none">Sin coincidencias para "${esc(q)}". Cargalo con "＋ Cliente nuevo".</div>`;
-  box.classList.add("show");
-}
-function elegirCliente(id){
-  const c=CLIENTES.find(x=>x.id===id); if(!c) return;
-  clienteActual={id:c.id, nombre:c.nombre||'', apellido:c.apellido||'', dni:c.dni||'', tel:c.tel||'', mail:c.mail||'', provincia:c.provincia||'', localidad:c.localidad||''};
-  renderClienteBox();
 }
 
 function abrirModalCliente(modo, id){
@@ -1301,8 +1276,8 @@ function abrirRemito(nro){
       <p class="medio">¡La factura digital colabora con el cuidado del medio ambiente!</p>
       <p class="nota">¡No responder! Este correo no puede recibir mensajes, por este motivo te agradecemos que no respondas este email. Para contactarte con Aura Minipiscinas comunicarse por cualquiera de las vías de contacto mencionadas en la parte inferior de este e-mail.</p>
       <div class="efoot">
-        <div>Vendedor: ${esc(v.vendedor)}<br>@Aura.minipiscinas</div>
-        <div class="der">Av. Rafael Núñez 3961,<br>X5000 Córdoba</div>
+        <div>Vendedor: ${esc(v.vendedor)}<br>@aura.minipiscinas</div>
+        <div class="der">adm.auraminipiscinas@gmail.com</div>
       </div>
       <div class="egen">Mensaje generado por SISTEMAS DE GESTIÓN PARA PYMES</div>
     </div>
@@ -1421,7 +1396,7 @@ function descargarRemitoPDF(nro){
   y+=16; doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(0);
   doc.text("Documento no válido como factura", M, y);
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text("Aura Minipiscinas — Av. Rafael Núñez 3961, X5000 Córdoba — @Aura.minipiscinas", W/2, H-28, {align:"center"});
+  doc.text("Aura Minipiscinas — @aura.minipiscinas — adm.auraminipiscinas@gmail.com", W/2, H-28, {align:"center"});
 
   doc.save(`Venta_nro_${v.nro}_Comprobante_R.pdf`);
   toast(`✅ PDF del remito de la venta #${v.nro} generado`);
@@ -1898,7 +1873,11 @@ function toggleCliente(id){
 /* ====== PRODUCTOS ====== */
 function prodFiltrados(){
   const q=(prodQuery||'').trim().toLowerCase();
+  const gestor=puede('gestionar_productos');
   let rows=PRODUCTOS.filter(p=>{
+    /* Al que solo consulta (ej. un vendedor) no le mostramos los inactivos:
+       no los puede vender y sin la columna Estado no tendría cómo saberlo. */
+    if(!gestor && p.activo===false) return false;
     if(prodCatFiltro && p.cat!==prodCatFiltro) return false;
     if(prodEstado==='activo' && p.activo===false) return false;
     if(prodEstado==='inactivo' && p.activo!==false) return false;
@@ -1910,9 +1889,10 @@ function prodFiltrados(){
 }
 function viewProductos(){
   const gestor=puede('gestionar_productos');
+  const verStock=puede('ver_stock');
   $("#main").innerHTML=`
     <h1 class="page">Productos</h1>
-    <div class="hint">Solo se pueden vender productos cargados acá. El precio queda fijado al crearlos${gestor?' (lo podés editar)':' (lo edita un Administrador/Maestro)'}.</div>
+    <div class="hint">${gestor?'Solo se pueden vender productos cargados acá. El precio queda fijado al crearlos (lo podés editar).':'Lista de consulta: buscá un producto para ver su precio. Los precios los define un Administrador o el Maestro.'}</div>
     <div class="card">
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -1922,11 +1902,11 @@ function viewProductos(){
             <option value="">Todas las categorías</option>
             ${CATEGORIAS.map(c=>`<option ${prodCatFiltro===c?'selected':''}>${esc(c)}</option>`).join("")}
           </select>
-          <select style="max-width:170px" onchange="prodEstado=this.value;renderProdTabla()">
+          ${gestor?`<select style="max-width:170px" onchange="prodEstado=this.value;renderProdTabla()">
             <option value="" ${prodEstado===''?'selected':''}>Todos los estados</option>
             <option value="activo" ${prodEstado==='activo'?'selected':''}>Solo activos</option>
             <option value="inactivo" ${prodEstado==='inactivo'?'selected':''}>Solo inactivos</option>
-          </select>
+          </select>`:''}
         </div>
         <div style="display:flex;gap:8px">
           ${gestor?`<button class="btn btn-ghost btn-sm" onclick="abrirGestionCategorias()">⚙️ Categorías</button>`:''}
@@ -1935,7 +1915,7 @@ function viewProductos(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>Descripción</th><th>Categoría</th><th>Precio</th>${gestor?'<th>Costo</th>':''}<th>Stock</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <thead><tr><th>Nombre</th><th>Descripción</th><th>Categoría</th><th>Precio</th>${gestor?'<th>Costo</th>':''}${verStock?'<th>Stock</th>':''}${gestor?'<th>Estado</th><th>Acciones</th>':''}</tr></thead>
         <tbody id="tProd"></tbody>
       </table>
       </div>
@@ -1945,13 +1925,16 @@ function viewProductos(){
 function renderProdTabla(){
   const tb=$("#tProd"); if(!tb) return;
   const gestor=puede('gestionar_productos');
-  const cols = 6 + (gestor?2:0);
+  const verStock=puede('ver_stock');
+  /* Nombre, Descripción, Categoría y Precio los ve todo el que entra;
+     Costo/Estado/Acciones solo quien administra productos, y Stock según permiso. */
+  const cols = 4 + (gestor?1:0) + (verStock?1:0) + (gestor?2:0);
   const filtrados=prodFiltrados();
-  const cnt=$("#prodCount"); if(cnt) cnt.textContent=`${filtrados.length} de ${PRODUCTOS.length}`;
+  const cnt=$("#prodCount"); if(cnt) cnt.textContent = gestor ? `${filtrados.length} de ${PRODUCTOS.length}` : `${filtrados.length} producto${filtrados.length===1?'':'s'}`;
   tb.innerHTML=filtrados.length?filtrados.map(p=>{
     const stockTxt = esc((p.stock===''||p.stock==null)?'No Desc':p.stock);
     const stockCell = p.descStock ? `${stockTxt} <span class="cont cont-ok" title="Descuenta stock automáticamente">auto</span>` : stockTxt;
-    return `<tr class="${p.activo===false?'inactivo':''}"><td><b>${esc(p.nombre)}</b></td><td>${esc(p.desc||'—')}</td><td>${esc(p.cat||'—')}</td><td><b>${money(p.precio)}</b></td>${gestor?`<td>${(p.costo!=null&&p.costo!=='')?money(p.costo):'—'}</td>`:''}<td>${stockCell}</td><td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
+    return `<tr class="${p.activo===false?'inactivo':''}"><td><b>${esc(p.nombre)}</b></td><td>${esc(p.desc||'—')}</td><td>${esc(p.cat||'—')}</td><td><b>${money(p.precio)}</b></td>${gestor?`<td>${(p.costo!=null&&p.costo!=='')?money(p.costo):'—'}</td>`:''}${verStock?`<td>${stockCell}</td>`:''}${gestor?`<td>${p.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td><td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalProducto(${p.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${p.activo===false?'Activar':'Inactivar'}" onclick="toggleProducto(${p.id})">${p.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
   }).join(""):`<tr><td colspan="${cols}" class="empty">Sin productos con estos filtros.</td></tr>`;
 }
 
