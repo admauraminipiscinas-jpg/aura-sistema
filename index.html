@@ -1229,20 +1229,21 @@ function abrirOrden(nro){
   const cobrado=granTotal(v)-v.saldo;
   const ec=estColor(v.estado);
 
-  /* Separamos lo que se cobra de lo que va bonificado. Así se ve de una cuál es
-     la pileta que se lleva el cliente y qué viene incluido sin cargo: en la lista
-     todo mezclado no se entendía qué era qué. */
-  const conCargo = items.filter(i=>Number(i.precio)!==0);
-  const sinCargo = items.filter(i=>Number(i.precio)===0);
+  /* Van TODOS los productos en la misma tabla y con el mismo formato, también los
+     bonificados (cantidad, precio y subtotal en $ 0). Así se puede leer el detalle
+     completo de la venta de un saque. Van primero los que se cobran y después los
+     bonificados, para que la lista quede ordenada aunque en la base estén mezclados. */
   const esPileta = i => (i.categoria==="Minipiscinas") || /minipiscina|pileta/i.test(i.nombre||"");
+  const iconoDe = i => Number(i.precio)===0 ? '🎁' : (esPileta(i) ? '🏊' : '🧩');
+  const ordenados = [...items.filter(i=>Number(i.precio)!==0), ...items.filter(i=>Number(i.precio)===0)];
   const piezas = items.reduce((a,i)=>a+(+i.cant||0),0);
 
-  const filasProd = conCargo.length ? conCargo.map(i=>`
-        <tr>
+  const filasProd = ordenados.length ? ordenados.map(i=>`
+        <tr class="${Number(i.precio)===0?'bonif':''}">
           <td class="c-cant"><span class="cant">${i.cant}</span></td>
           <td>
             <div class="prod">
-              <span class="ico ${esPileta(i)?'ico-p':''}">${esPileta(i)?'🏊':'🧩'}</span>
+              <span class="ico ${esPileta(i)?'ico-p':''}">${iconoDe(i)}</span>
               <span class="nom">${esc(i.nombre)}</span>
             </div>
           </td>
@@ -1250,12 +1251,6 @@ function abrirOrden(nro){
           <td class="r money sub">${money(i.precio*i.cant)}</td>
         </tr>`).join("")
     : `<tr><td colspan="4" class="vacio">Esta venta no tiene productos cargados</td></tr>`;
-
-  const bloqueBonos = sinCargo.length ? `
-      <div class="bonos">
-        <div class="bonos-t">🎁 Incluido sin cargo</div>
-        <div class="chips">${sinCargo.map(i=>`<span class="chip">${i.cant>1?`<b>${i.cant}×</b> `:''}${esc(i.nombre)}</span>`).join("")}</div>
-      </div>` : "";
 
   /* Seguimiento del pedido: marcamos hasta dónde llegó según el catálogo de estados. */
   const idxAct = ESTADOS.findIndex(e=>e.nombre===v.estado);
@@ -1305,35 +1300,30 @@ function abrirOrden(nro){
     .dato a:hover{text-decoration:underline}
 
     table{width:100%;border-collapse:collapse}
-    thead th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b9691;font-weight:800;
-             text-align:left;padding:0 12px 10px;border-bottom:2px solid #e6ecea}
+    thead th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8b9691;font-weight:800;
+             text-align:left;padding:0 10px 8px;border-bottom:2px solid #e6ecea}
     thead th.r{text-align:right}
-    tbody td{padding:14px 12px;border-bottom:1px solid #eef2f0;vertical-align:middle}
+    tbody td{padding:8px 10px;border-bottom:1px solid #eef2f0;vertical-align:middle;font-size:13px}
     tbody tr:nth-child(even){background:#fafcfb}
     tbody tr{transition:background .15s ease,box-shadow .15s ease}
     tbody tr:hover{background:#e9f3ef;box-shadow:inset 4px 0 0 #3f6f5e}
     tbody tr:last-child td{border-bottom:none}
     td.r{text-align:right}
-    .money{font-variant-numeric:tabular-nums;white-space:nowrap}
+    .money{font-variant-numeric:tabular-nums;white-space:nowrap;font-size:13px}
     .sub{font-weight:800;color:#233b33}
-    .c-cant{width:56px}
-    .cant{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;
-          background:#eef4f1;border:1px solid #dbe7e2;border-radius:9px;font-weight:800;color:#3f6f5e;font-size:14px}
+    /* Los bonificados van igual que el resto, solo con el importe en gris */
+    tr.bonif .money{color:#8b9691}
+    .c-cant{width:48px}
+    .cant{display:inline-flex;align-items:center;justify-content:center;min-width:25px;height:25px;
+          background:#eef4f1;border:1px solid #dbe7e2;border-radius:8px;font-weight:800;color:#3f6f5e;font-size:12.5px}
     tr:hover .cant{background:#3f6f5e;color:#fff;border-color:#3f6f5e}
-    .prod{display:flex;align-items:center;gap:11px}
-    .ico{width:38px;height:38px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:19px;
-         background:#f1f5f3;border:1px solid #e6ecea;border-radius:10px}
+    .prod{display:flex;align-items:center;gap:9px}
+    .ico{width:28px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;
+         background:#f1f5f3;border:1px solid #e6ecea;border-radius:8px}
     .ico-p{background:#e6f2ec;border-color:#cfe3d9}
-    .nom{font-weight:700;color:#233b33}
-    .vacio{text-align:center;color:#9aa6a1;padding:26px}
-
-    .bonos{margin-top:16px;background:#f7faf9;border:1px dashed #cfe3d9;border-radius:12px;padding:14px 16px}
-    .bonos-t{font-size:11.5px;font-weight:800;color:#3f6f5e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
-    .chips{display:flex;flex-wrap:wrap;gap:8px}
-    .chip{background:#fff;border:1px solid #dbe7e2;border-radius:999px;padding:6px 13px;font-size:13px;
-          font-weight:600;color:#33403b;transition:background .15s,border-color .15s,transform .12s}
-    .chip:hover{background:#e9f3ef;border-color:#3f6f5e;transform:translateY(-1px)}
-    .pie-items{margin-top:14px;font-size:12.5px;color:#8b9691;text-align:right}
+    .nom{font-weight:700;color:#233b33;font-size:13px}
+    .vacio{text-align:center;color:#9aa6a1;padding:22px}
+    .pie-items{margin-top:12px;font-size:12px;color:#8b9691;text-align:right}
 
     .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .lin{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px dashed #e6ecea;font-weight:600}
@@ -1416,7 +1406,6 @@ function abrirOrden(nro){
         <thead><tr><th>Cant.</th><th>Producto / Pileta</th><th class="r">Precio unit.</th><th class="r">Subtotal</th></tr></thead>
         <tbody>${filasProd}</tbody>
       </table>
-      ${bloqueBonos}
       <div class="pie-items">${items.length} ítem${items.length===1?'':'s'} · ${piezas} unidad${piezas===1?'':'es'} en total</div>
     </section>
 
