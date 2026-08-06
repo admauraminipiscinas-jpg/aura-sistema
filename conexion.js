@@ -112,7 +112,10 @@ window.salir = async function(){
 };
 
 /* ---- Guardado: NUEVA VENTA (+ ítems, IVA, pago inicial, stock) ---- */
-window.confirmarVenta = async function(){
+/* Igual que el alta de cliente: sin esto, un doble clic en "Confirmar venta"
+   cargaba la venta dos veces (y descontaba el stock dos veces). */
+window.confirmarVenta = function(){ return unSoloGuardado('venta', '#btnConfirmarVenta', _confirmarVentaReal); };
+async function _confirmarVentaReal(){
   if(!clienteActual){ toast("⚠️ Cargá el cliente primero"); return; }
   if(!carrito.length){ toast("⚠️ Agregá al menos un producto"); return; }
   /* Fecha y vendedor: para el vendedor común son siempre hoy y él mismo.
@@ -161,30 +164,69 @@ window.confirmarVenta = async function(){
     `Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`+
     (carga.historica?` · fecha ${fmtFechaCorta(carga.fecha)} · vendedor ${carga.vendedor}`:''));
   toast(`✅ Venta #${nro} guardada`+(carga.historica?` · ${fmtFechaCorta(carga.fecha)} · ${carga.vendedor}`:'')+(remito&&c.mail?` · remito a ${c.mail}`:""));
+  respaldarEnSheet(nro);
   nav("ventas");
-};
+}
 
-/* ---- Guardado: EDICIÓN DE VENTA (persiste lo que cambió la pantalla) ---- */
+/* ---- Guardado: EDICIÓN DE VENTA (persiste lo que cambió la pantalla) ----
+   OJO con los permisos: cuando la base rechaza una edición por RLS no devuelve
+   error, simplemente no toca ninguna fila. Por eso pedimos siempre las filas
+   afectadas (.select) y, si vuelven vacías, cortamos ANTES de insertar los
+   ítems nuevos y dejamos la venta como estaba. Sin esto, cada intento fallido
+   sumaba una copia de los productos y la venta terminaba con todo duplicado. */
 const _guardarEdicionVenta = window.guardarEdicionVenta;
 window.guardarEdicionVenta = function(nro){
   const nuevos = (editDraft && editDraft.nuevosPagos) ? editDraft.nuevosPagos.slice() : [];
+  const vAntes = VENTAS.find(x=>x.nro===nro);
+  const copiaPrevia = vAntes ? JSON.parse(JSON.stringify(vAntes)) : null;
   const ok = _guardarEdicionVenta(nro);   // actualiza memoria + audita + cierra modal
   if(!ok) return false;
   const v = VENTAS.find(x=>x.nro===nro); if(!v) return true;
   (async()=>{
     try{
-      const r1=await SB.from('ventas').update({total:v.total, iva:v.iva, factura:v.factura, saldo:v.saldo, nota:v.nota}).eq('id',nro);
+      const r1=await SB.from('ventas').update({total:v.total, iva:v.iva, factura:v.factura, saldo:v.saldo, nota:v.nota}).eq('id',nro).select('id');
       if(r1.error) throw r1.error;
+      if(!r1.data || !r1.data.length) throw new Error("no tenés permiso para editar esta venta");
       /* Primero insertamos los ítems nuevos y recién después borramos los viejos:
          si el insert falla, la venta no se queda sin productos. */
       const {data:itemsViejos}=await SB.from('venta_items').select('id').eq('venta_id',nro);
       if(v.items.length){ const r2=await SB.from('venta_items').insert(v.items.map(i=>({venta_id:nro,nombre:i.nombre,precio:i.precio,cantidad:i.cant,categoria:i.categoria||null}))); if(r2.error) throw r2.error; }
-      if(itemsViejos && itemsViejos.length){ const rd=await SB.from('venta_items').delete().in('id',itemsViejos.map(x=>x.id)); if(rd.error) throw rd.error; }
+      if(itemsViejos && itemsViejos.length){
+        const rd=await SB.from('venta_items').delete().in('id',itemsViejos.map(x=>x.id)).select('id');
+        if(rd.error) throw rd.error;
+        if(!rd.data || rd.data.length!==itemsViejos.length){
+          toast("⚠️ La venta #"+nro+" quedó con productos repetidos. Avisá al administrador.");
+        }
+      }
       if(nuevos.length){ const r3=await SB.from('pagos').insert(nuevos.map(pp=>({venta_id:nro,monto:pp.monto,metodo:pp.metodo,fecha:pp.fecha,usuario:pp.usuario}))); if(r3.error) throw r3.error; }
-    }catch(ex){ toast("⚠️ Guardado en pantalla OK, pero error en la base: "+(ex.message||ex)); }
+      respaldarEnSheet(nro);
+    }catch(ex){
+      /* No se guardó: dejamos la venta como estaba para que la pantalla no mienta. */
+      if(copiaPrevia){ Object.assign(v, copiaPrevia); renderTablaVentas(); }
+      toast("⚠️ No se pudo guardar la venta #"+nro+": "+(ex.message||ex));
+    }
   })();
   return true;
 };
+
+/* ---- Copia de seguridad en la planilla de Google ----
+   Se dispara sola cada vez que una venta se crea, se edita, se cobra o se
+   cancela. Mandamos solo el número: el servidor arma la fila leyendo la base.
+   No molesta al vendedor si falla (queda anotado en la consola) porque la
+   venta ya quedó guardada igual; la planilla es una copia, no el original. */
+async function respaldarEnSheet(nro){
+  try{
+    const {data:{session}} = await SB.auth.getSession();
+    const r = await fetch('/api/backup-sheet',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+      body: JSON.stringify({nro})
+    });
+    const j = await r.json();
+    if(j.sinConfigurar) return;                       // todavía no se conectó la planilla
+    if(!j.ok) console.warn('Copia en la planilla:', j.error||'no se pudo guardar');
+  }catch(ex){ console.warn('Copia en la planilla:', ex.message||ex); }
+}
 
 /* ---- Envío de correos al cliente ----
    Solo mandamos el número de venta: el servidor resuelve el destinatario y los
@@ -217,7 +259,27 @@ window.reenviarComprobante = function(nro){ cerrarModal(); _enviarRemitoVenta(nr
 window.reenviarCorreoCompleto = function(nro){ cerrarModal(); _enviarRemitoVenta(nro,true); };
 
 /* ---- Guardado: CLIENTE (alta/edición) ---- */
-window.guardarCliente = async function(){
+/* Un guardado tarda lo que tarda la base en contestar (varias décimas de
+   segundo). En ese rato el botón seguía activo: si se apretaba otra vez —o el
+   mouse mandaba un doble clic— salían dos altas iguales y el cliente quedaba
+   cargado dos veces. Esto deja pasar solo la primera y bloquea el botón hasta
+   que termina. */
+const _guardadoEnCurso = {};
+async function unSoloGuardado(clave, selectorBoton, tarea){
+  if(_guardadoEnCurso[clave]) return;          // ya hay uno en camino: ignoramos el clic
+  _guardadoEnCurso[clave] = true;
+  const btn = selectorBoton ? document.querySelector(selectorBoton) : null;
+  const textoOriginal = btn ? btn.textContent : null;
+  if(btn){ btn.disabled = true; btn.style.opacity = "0.65"; btn.style.cursor = "wait"; btn.textContent = "Guardando…"; }
+  try{ return await tarea(); }
+  finally{
+    _guardadoEnCurso[clave] = false;
+    if(btn && document.body.contains(btn)){ btn.disabled=false; btn.style.opacity=""; btn.style.cursor=""; btn.textContent=textoOriginal; }
+  }
+}
+
+window.guardarCliente = function(){ return unSoloGuardado('cliente', '#btnGuardarCliente', _guardarClienteReal); };
+async function _guardarClienteReal(){
   const campos={nombre:$("#cNombre"),apellido:$("#cApellido"),dni:$("#cDni"),tel:$("#cTel"),provincia:$("#cProvincia"),localidad:$("#cLocalidad"),mail:$("#cMail")};
   let faltan=false; Object.values(campos).forEach(el=>{const v=!el.value.trim(); el.classList.toggle("err",v); if(v)faltan=true;});
   if(faltan){ toast("⚠️ Completá todos los campos obligatorios (*)"); return; }
@@ -227,6 +289,21 @@ window.guardarCliente = async function(){
   const fila={nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,telefono:datos.tel,email:datos.mail,provincia:datos.provincia,localidad:datos.localidad};
   const editId = (modalModo==="venta" && clienteActual) ? clienteActual.id
                : (typeof clienteEditId!=="undefined" && clienteEditId!=null) ? clienteEditId : null;
+
+  /* El DNI no se puede repetir: es lo que identifica a una persona. Si ya hay
+     otra ficha con ese documento, avisamos quién es en vez de dejar que se
+     cargue un cliente duplicado (o que se le ponga a uno el DNI de otro).
+     Comparamos solo los números, así "20.123.456" y "20123456" son el mismo. */
+  const soloNumeros = t => String(t||'').replace(/\D/g,'');
+  const dniNuevo = soloNumeros(datos.dni);
+  if(dniNuevo){
+    const repetido = CLIENTES.find(x => x.id!==editId && soloNumeros(x.dni)===dniNuevo);
+    if(repetido){
+      campos.dni.classList.add("err"); campos.dni.focus();
+      toast(`⚠️ El DNI ${datos.dni} ya está cargado en el cliente ${repetido.nombre} ${repetido.apellido||''}`.trim());
+      return;
+    }
+  }
   if(editId!=null){
     const r=await SB.from('clientes').update(fila).eq('id',editId); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
     if(modalModo==="venta" && clienteActual) Object.assign(clienteActual,datos);
@@ -239,7 +316,7 @@ window.guardarCliente = async function(){
   }
   cerrarModal();
   if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); } else { viewClientes(); toast("✅ Cliente guardado"); }
-};
+}
 
 /* ---- Guardado: PRODUCTO (alta/edición, con costo y descuento de stock) ---- */
 window.guardarProducto = async function(id){
@@ -256,18 +333,42 @@ window.guardarProducto = async function(id){
   cerrarModal(); viewProductos(); toast("✅ Producto guardado");
 };
 
-/* ---- Activar/Inactivar y cambios de estado (envuelven la función original) ---- */
+/* ---- Activar/Inactivar y cambios de estado (envuelven la función original) ----
+   Todas usan guardarCampo(): si la base rechaza el cambio por permisos, no
+   devuelve error pero tampoco toca ninguna fila, así que hay que mirar las
+   filas afectadas y avisar. Antes esto se perdía en silencio y la pantalla
+   mostraba un cambio que en realidad nunca se guardó. */
+async function guardarCampo(tabla, id, campos, queEs){
+  try{
+    const r=await SB.from(tabla).update(campos).eq('id',id).select('id');
+    if(r.error) throw r.error;
+    if(!r.data || !r.data.length) throw new Error("no tenés permiso");
+    return true;
+  }catch(ex){
+    toast("⚠️ No se pudo guardar "+queEs+": "+(ex.message||ex)+". Volvé a entrar para ver los datos reales.");
+    return false;
+  }
+}
+
 const _toggleProducto=window.toggleProducto;
-window.toggleProducto=function(id){ _toggleProducto(id); const p=PRODUCTOS.find(x=>x.id===id); if(p) SB.from('productos').update({activo:p.activo}).eq('id',id).then(()=>{}); };
+window.toggleProducto=function(id){ _toggleProducto(id); const p=PRODUCTOS.find(x=>x.id===id); if(p) guardarCampo('productos',id,{activo:p.activo},"el producto"); };
 
 const _toggleCliente=window.toggleCliente;
-window.toggleCliente=function(id){ _toggleCliente(id); const c=CLIENTES.find(x=>x.id===id); if(c) SB.from('clientes').update({activo:c.activo}).eq('id',id).then(()=>{}); };
+window.toggleCliente=function(id){ _toggleCliente(id); const c=CLIENTES.find(x=>x.id===id); if(c) guardarCampo('clientes',id,{activo:c.activo},"el cliente"); };
 
 const _guardarEstadoVenta=window.guardarEstadoVenta;
-window.guardarEstadoVenta=function(nro){ _guardarEstadoVenta(nro); const v=VENTAS.find(x=>x.nro===nro); if(v) SB.from('ventas').update({estado:v.estado}).eq('id',nro).then(()=>{}); };
+window.guardarEstadoVenta=function(nro){ _guardarEstadoVenta(nro); const v=VENTAS.find(x=>x.nro===nro); if(v) guardarCampo('ventas',nro,{estado:v.estado},"el estado de la venta #"+nro); };
 
 const _confirmarCancelarVenta=window.confirmarCancelarVenta;
-window.confirmarCancelarVenta=function(nro){ _confirmarCancelarVenta(nro); SB.from('ventas').update({cancelada:true}).eq('id',nro).then(()=>{}); };
+window.confirmarCancelarVenta=function(nro){
+  _confirmarCancelarVenta(nro);
+  guardarCampo('ventas',nro,{cancelada:true},"la cancelación de la venta #"+nro).then(ok=>{
+    /* Si no se pudo cancelar en la base, deshacemos en pantalla: si no, los
+       reportes y el listado mostrarían como cancelada una venta que sigue viva. */
+    if(!ok){ const v=VENTAS.find(x=>x.nro===nro); if(v){ v.cancelada=false; renderTablaVentas(); } }
+    else respaldarEnSheet(nro);
+  });
+};
 
 /* ---- Catálogos (reemplazan la lista completa en la base) ---- */
 const _guardarEstados=window.guardarEstados;
@@ -343,9 +444,14 @@ window.guardarUsuario=async function(i){
 /* ---- Estado en línea (columna Estado): persistir en la base ---- */
 const _cambiarEstadoInline = window.cambiarEstadoInline;
 window.cambiarEstadoInline = function(nro, val){
+  const previo = (VENTAS.find(x=>x.nro===nro)||{}).estado;
   _cambiarEstadoInline(nro, val);
   const v = VENTAS.find(x=>x.nro===nro);
-  if(v && v.estado===val){ try{ SB.from('ventas').update({estado:val}).eq('id',nro).then(()=>{}); }catch(_){} }
+  if(v && v.estado===val){
+    guardarCampo('ventas',nro,{estado:val},"el estado de la venta #"+nro).then(ok=>{
+      if(!ok && previo!=null){ v.estado=previo; renderTablaVentas(); }
+    });
+  }
 };
 
 /* ---- Confirmar cobros (lista de trabajo): resincroniza pagos + saldo y manda SOLO el remito si se pidió ---- */
@@ -368,6 +474,7 @@ window.confirmarCobros = async function(nro){
     }
     const r2=await SB.from('ventas').update({saldo:v.saldo}).eq('id', nro);
     if(r2.error) throw r2.error;
+    respaldarEnSheet(nro);
   }catch(ex){
     toast("⚠️ Guardado en pantalla, pero error guardando en la base: "+(ex.message||ex));
     return;   // sin guardar no mandamos un comprobante con datos que no coinciden

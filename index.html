@@ -564,7 +564,7 @@ function viewVender(){
         <div class="l" id="sGranRow" style="display:none">Total c/IVA <b id="sGran" class="red">$ 0</b></div>
         <div class="l">Cobrado <b id="sCobrado" class="green">$ 0</b></div>
         <div class="l">Saldo <b id="sSaldo" class="red">$ 0</b></div>
-        <button class="btn btn-greenlight" style="width:100%;margin-top:16px;justify-content:center;font-size:15px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
+        <button class="btn btn-greenlight" id="btnConfirmarVenta" style="width:100%;margin-top:16px;justify-content:center;font-size:15px" onclick="confirmarVenta()">🛒 Confirmar venta</button>
       </div>
     </div>`;
   renderClienteBox();
@@ -699,7 +699,7 @@ function abrirModalCliente(modo, id){
         </div>
         <div class="foot">
           <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
-          <button class="btn btn-green" onclick="guardarCliente()">${editando?'Guardar cambios':'Guardar cliente'}</button>
+          <button class="btn btn-green" id="btnGuardarCliente" onclick="guardarCliente()">${editando?'Guardar cambios':'Guardar cliente'}</button>
         </div>
       </div>
     </div>`;
@@ -1226,66 +1226,220 @@ function abrirOrden(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
   const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
   const items=v.items||[];
-  const filasProd = items.length
-    ? items.map(i=>`<tr><td>${i.cant}</td><td>${esc(i.nombre)}</td><td class="r">${money(i.precio)}</td><td class="r">${money(i.precio*i.cant)}</td></tr>`).join("")
-    : `<tr><td colspan="4" style="text-align:center;color:#888">Sin ítems cargados en esta venta</td></tr>`;
   const cobrado=granTotal(v)-v.saldo;
-  const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Orden de Venta #${v.nro}</title>
-  <style>
-    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:#1f2937;max-width:780px;margin:24px auto;padding:0 20px}
-    h1{color:#345c4e;margin:0;font-size:26px} .sub{color:#6b7280;margin:4px 0 20px;font-size:14px}
-    .box{border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:16px}
-    .box h3{margin:0 0 12px;color:#345c4e;font-size:13px;text-transform:uppercase;letter-spacing:.6px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 22px;font-size:14px}
-    .grid .lbl{color:#6b7280}
-    table{width:100%;border-collapse:collapse;font-size:14px}
-    th,td{border-bottom:1px solid #e5e7eb;padding:9px 8px;text-align:left}
-    th{background:#f7faf9;color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
-    td.r,th.r{text-align:right}
-    .tot{display:flex;justify-content:space-between;padding:7px 0;font-weight:700}
-    .tot.big{font-size:17px;border-top:2px solid #e5e7eb;margin-top:4px;padding-top:10px}
-    .toolbar{display:flex;gap:10px;margin-bottom:18px}
-    .btn{background:#3f6f5e;color:#fff;border:none;border-radius:9px;padding:10px 18px;font-weight:700;cursor:pointer;font-size:14px}
-    .brand{font-weight:800;color:#3f6f5e;letter-spacing:.5px}
-    @media print{.toolbar{display:none} body{margin:0}}
-  </style></head><body>
-    <div class="toolbar"><button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button><button class="btn" style="background:#6b7280" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn" style="background:#2f8f6a" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}</div>
-    <div class="brand">AURA MINIPISCINAS</div>
-    <h1>Orden de Venta #${v.nro}</h1>
-    <div class="sub">Fecha de venta: ${fmtFechaCorta(v.fecha)} &nbsp;·&nbsp; Vendedor: ${esc(v.vendedor)} &nbsp;·&nbsp; Estado: <b>${esc(v.estado)}</b></div>
+  const ec=estColor(v.estado);
 
-    <div class="box"><h3>Datos del cliente</h3>
-      <div class="grid">
-        <div><span class="lbl">Nombre:</span> <b>${esc(v.cliente)}</b></div>
-        <div><span class="lbl">DNI:</span> <b>${esc(c.dni||'—')}</b></div>
-        <div><span class="lbl">Teléfono:</span> <b>${esc(c.tel||'—')}</b></div>
-        <div><span class="lbl">Email:</span> <b>${esc(c.mail||'—')}</b></div>
-        <div><span class="lbl">Localidad:</span> <b>${esc(c.localidad||v.localidad||'—')}</b></div>
-        <div><span class="lbl">Provincia:</span> <b>${esc(c.provincia||'—')}</b></div>
+  /* Separamos lo que se cobra de lo que va bonificado. Así se ve de una cuál es
+     la pileta que se lleva el cliente y qué viene incluido sin cargo: en la lista
+     todo mezclado no se entendía qué era qué. */
+  const conCargo = items.filter(i=>Number(i.precio)!==0);
+  const sinCargo = items.filter(i=>Number(i.precio)===0);
+  const esPileta = i => (i.categoria==="Minipiscinas") || /minipiscina|pileta/i.test(i.nombre||"");
+  const piezas = items.reduce((a,i)=>a+(+i.cant||0),0);
+
+  const filasProd = conCargo.length ? conCargo.map(i=>`
+        <tr>
+          <td class="c-cant"><span class="cant">${i.cant}</span></td>
+          <td>
+            <div class="prod">
+              <span class="ico ${esPileta(i)?'ico-p':''}">${esPileta(i)?'🏊':'🧩'}</span>
+              <span class="nom">${esc(i.nombre)}</span>
+            </div>
+          </td>
+          <td class="r money">${money(i.precio)}</td>
+          <td class="r money sub">${money(i.precio*i.cant)}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="4" class="vacio">Esta venta no tiene productos cargados</td></tr>`;
+
+  const bloqueBonos = sinCargo.length ? `
+      <div class="bonos">
+        <div class="bonos-t">🎁 Incluido sin cargo</div>
+        <div class="chips">${sinCargo.map(i=>`<span class="chip">${i.cant>1?`<b>${i.cant}×</b> `:''}${esc(i.nombre)}</span>`).join("")}</div>
+      </div>` : "";
+
+  /* Seguimiento del pedido: marcamos hasta dónde llegó según el catálogo de estados. */
+  const idxAct = ESTADOS.findIndex(e=>e.nombre===v.estado);
+  const timeline = v.cancelada
+    ? `<div class="cancel">✖️ Esta venta fue cancelada</div>`
+    : `<ol class="tl">${ESTADOS.map((e,i)=>{
+        const cls = i<idxAct ? "ok" : (i===idxAct ? "now" : "next");
+        return `<li class="${cls}"><span class="dot"></span><span class="txt">${esc(e.nombre)}</span></li>`;
+      }).join("")}</ol>`;
+
+  const telLimpio = String(c.tel||"").replace(/[^0-9]/g,"");
+
+  const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Orden de Venta #${v.nro}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         color:#1f2937;background:#f2f6f4;padding:26px 18px;font-size:15px;line-height:1.5}
+    .page{max-width:860px;margin:0 auto}
+    .barra{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
+    .btn{background:#3f6f5e;color:#fff;border:none;border-radius:10px;padding:11px 18px;font-weight:700;
+         cursor:pointer;font-size:14px;font-family:inherit;transition:transform .12s,box-shadow .12s,background .12s}
+    .btn:hover{background:#345c4e;transform:translateY(-1px);box-shadow:0 6px 16px rgba(63,111,94,.28)}
+    .btn:active{transform:translateY(0);box-shadow:none}
+    .btn.gris{background:#6b7280}.btn.gris:hover{background:#565e6b;box-shadow:0 6px 16px rgba(107,114,128,.28)}
+    .btn.cobro{background:#2f8f6a}.btn.cobro:hover{background:#27795a;box-shadow:0 6px 16px rgba(47,143,106,.3)}
+
+    .encabezado{margin-bottom:18px}
+    .brand{font-weight:800;color:#3f6f5e;letter-spacing:3px;font-size:13px}
+    .brand small{display:block;font-size:9px;letter-spacing:5px;color:#9aa6a1;font-weight:700;margin-top:2px}
+    h1{font-size:29px;font-weight:800;color:#233b33;margin:10px 0 8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:999px;font-size:13px;font-weight:700;
+           background:${ec.bg};color:${ec.fg}}
+    .badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+    .meta{color:#6b7280;font-size:13.5px;display:flex;gap:16px;flex-wrap:wrap}
+    .meta b{color:#374151}
+
+    .card{background:#fff;border:1px solid #e6ecea;border-radius:16px;padding:20px 22px;margin-bottom:16px;
+          box-shadow:0 1px 3px rgba(16,40,32,.05)}
+    .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:#3f6f5e;font-weight:800;
+             margin-bottom:16px;display:flex;align-items:center;gap:8px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 26px}
+    .dato .lbl{font-size:11.5px;color:#8b9691;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+    .dato .val{font-weight:700;color:#233b33;margin-top:2px;word-break:break-word}
+    .dato a{color:#3f6f5e;text-decoration:none}
+    .dato a:hover{text-decoration:underline}
+
+    table{width:100%;border-collapse:collapse}
+    thead th{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b9691;font-weight:800;
+             text-align:left;padding:0 12px 10px;border-bottom:2px solid #e6ecea}
+    thead th.r{text-align:right}
+    tbody td{padding:14px 12px;border-bottom:1px solid #eef2f0;vertical-align:middle}
+    tbody tr:nth-child(even){background:#fafcfb}
+    tbody tr{transition:background .15s ease,box-shadow .15s ease}
+    tbody tr:hover{background:#e9f3ef;box-shadow:inset 4px 0 0 #3f6f5e}
+    tbody tr:last-child td{border-bottom:none}
+    td.r{text-align:right}
+    .money{font-variant-numeric:tabular-nums;white-space:nowrap}
+    .sub{font-weight:800;color:#233b33}
+    .c-cant{width:56px}
+    .cant{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;
+          background:#eef4f1;border:1px solid #dbe7e2;border-radius:9px;font-weight:800;color:#3f6f5e;font-size:14px}
+    tr:hover .cant{background:#3f6f5e;color:#fff;border-color:#3f6f5e}
+    .prod{display:flex;align-items:center;gap:11px}
+    .ico{width:38px;height:38px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:19px;
+         background:#f1f5f3;border:1px solid #e6ecea;border-radius:10px}
+    .ico-p{background:#e6f2ec;border-color:#cfe3d9}
+    .nom{font-weight:700;color:#233b33}
+    .vacio{text-align:center;color:#9aa6a1;padding:26px}
+
+    .bonos{margin-top:16px;background:#f7faf9;border:1px dashed #cfe3d9;border-radius:12px;padding:14px 16px}
+    .bonos-t{font-size:11.5px;font-weight:800;color:#3f6f5e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+    .chips{display:flex;flex-wrap:wrap;gap:8px}
+    .chip{background:#fff;border:1px solid #dbe7e2;border-radius:999px;padding:6px 13px;font-size:13px;
+          font-weight:600;color:#33403b;transition:background .15s,border-color .15s,transform .12s}
+    .chip:hover{background:#e9f3ef;border-color:#3f6f5e;transform:translateY(-1px)}
+    .pie-items{margin-top:14px;font-size:12.5px;color:#8b9691;text-align:right}
+
+    .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .lin{display:flex;justify-content:space-between;align-items:center;padding:11px 0;border-bottom:1px dashed #e6ecea;font-weight:600}
+    .lin:last-child{border-bottom:none}
+    .lin .n{font-variant-numeric:tabular-nums;font-weight:800}
+    .lin.total .n{font-size:19px;color:#233b33}
+    .lin.ok .n{color:#16a34a}
+    .lin.saldo{margin-top:6px;border-top:2px solid #e6ecea;border-bottom:none;padding-top:14px}
+    .lin.saldo span{font-size:16px;font-weight:800}
+    .lin.saldo .n{font-size:23px;color:#dc2626}
+    .lin.saldo.pago .n{color:#16a34a}
+    .pagos-det{font-size:12.5px;color:#6b7280;padding:8px 0 0}
+    .pagos-det div{padding:3px 0}
+
+    .tl{list-style:none;position:relative;padding-left:6px}
+    .tl li{position:relative;padding:0 0 20px 26px;font-size:14px}
+    .tl li:last-child{padding-bottom:0}
+    .tl li::before{content:"";position:absolute;left:6px;top:16px;bottom:-4px;width:2px;background:#e6ecea}
+    .tl li:last-child::before{display:none}
+    .tl .dot{position:absolute;left:0;top:3px;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid #d6dedb}
+    .tl li.ok .dot{background:#16a34a;border-color:#16a34a}
+    .tl li.ok::before{background:#bbe6cb}
+    .tl li.ok .txt{color:#4b5563}
+    .tl li.now .dot{background:#3f6f5e;border-color:#3f6f5e;box-shadow:0 0 0 4px rgba(63,111,94,.16)}
+    .tl li.now .txt{font-weight:800;color:#233b33}
+    .tl li.next .txt{color:#a3aeaa}
+    .cancel{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:700;border-radius:10px;padding:14px 16px}
+
+    .nota{font-size:14px;white-space:pre-wrap;background:#fffdf5;border:1px solid #f3e6c0;border-radius:10px;padding:14px 16px;color:#4b4326}
+
+    @media(max-width:680px){
+      body{padding:16px 12px}
+      .grid,.cols{grid-template-columns:1fr}
+      h1{font-size:23px}
+      .card{padding:16px}
+      thead th:nth-child(3),tbody td:nth-child(3){display:none}
+    }
+    @media print{
+      body{background:#fff;padding:0;font-size:12px}
+      .barra{display:none}
+      .card{box-shadow:none;border-color:#d8e0dd;break-inside:avoid;margin-bottom:10px}
+      tbody tr:hover{background:inherit;box-shadow:none}
+      tbody tr:hover .cant{background:#eef4f1;color:#3f6f5e;border-color:#dbe7e2}
+      .cols{grid-template-columns:1fr 1fr}
+    }
+  </style></head><body>
+  <div class="page">
+
+    <div class="barra">
+      <button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+      <button class="btn gris" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>
+      ${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn cobro" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}
+    </div>
+
+    <div class="encabezado">
+      <div class="brand">AURA<small>MINIPISCINAS</small></div>
+      <h1>Orden de Venta #${v.nro} <span class="badge">${v.cancelada?'Cancelada':esc(v.estado)}</span></h1>
+      <div class="meta">
+        <span>📅 Fecha de venta: <b>${fmtFechaCorta(v.fecha)}</b></span>
+        <span>👤 Vendedor: <b>${esc(v.vendedor)}</b></span>
+        <span>🚚 Entrega: <b>${fmtFechaCorta(v.entrega)}</b></span>
       </div>
     </div>
 
-    <div class="box"><h3>Pedido — ¿qué compró?</h3>
-      <div class="grid" style="margin-bottom:14px">
-        <div><span class="lbl">Fecha prometida de entrega:</span> <b>${fmtFechaCorta(v.entrega)}</b></div>
+    <section class="card">
+      <h2>👤 Datos del cliente</h2>
+      <div class="grid">
+        <div class="dato"><div class="lbl">Nombre</div><div class="val">${esc(v.cliente)}</div></div>
+        <div class="dato"><div class="lbl">DNI</div><div class="val">${esc(c.dni||'—')}</div></div>
+        <div class="dato"><div class="lbl">Teléfono</div><div class="val">${c.tel?`<a href="https://wa.me/${telLimpio}" target="_blank">${esc(c.tel)} 💬</a>`:'—'}</div></div>
+        <div class="dato"><div class="lbl">Email</div><div class="val">${c.mail?`<a href="mailto:${esc(c.mail)}">${esc(c.mail)} ✉️</a>`:'—'}</div></div>
+        <div class="dato"><div class="lbl">Localidad</div><div class="val">${esc(c.localidad||v.localidad||'—')}</div></div>
+        <div class="dato"><div class="lbl">Provincia</div><div class="val">${esc(c.provincia||v.provincia||'—')}</div></div>
       </div>
+    </section>
+
+    <section class="card">
+      <h2>🛒 Pedido — ¿qué compró?</h2>
       <table>
-        <thead><tr><th>Cant.</th><th>Producto / Pileta</th><th class="r">Precio</th><th class="r">Subtotal</th></tr></thead>
+        <thead><tr><th>Cant.</th><th>Producto / Pileta</th><th class="r">Precio unit.</th><th class="r">Subtotal</th></tr></thead>
         <tbody>${filasProd}</tbody>
       </table>
+      ${bloqueBonos}
+      <div class="pie-items">${items.length} ítem${items.length===1?'':'s'} · ${piezas} unidad${piezas===1?'':'es'} en total</div>
+    </section>
+
+    <div class="cols">
+      <section class="card">
+        <h2>💳 Resumen de pagos</h2>
+        ${v.factura?`<div class="lin"><span>Subtotal (sin IVA)</span><span class="n">${money(v.total)}</span></div>
+        <div class="lin"><span>IVA (21%)</span><span class="n">${money(v.iva||0)}</span></div>`:''}
+        <div class="lin total"><span>Total del pedido</span><span class="n">${money(granTotal(v))}</span></div>
+        <div class="lin ok"><span>Pagos realizados</span><span class="n">${money(cobrado)}</span></div>
+        ${(v.pagos&&v.pagos.length)?`<div class="pagos-det">${v.pagos.map(p=>`<div>${p.fecha?fmtFechaCorta(p.fecha)+' · ':''}${esc(p.metodo||'Pago')} — <b>${money(p.monto)}</b></div>`).join("")}</div>`:''}
+        <div class="lin saldo ${v.saldo<=0?'pago':''}"><span>Saldo pendiente</span><span class="n">${money(v.saldo)}${v.saldo<=0?' ✓':''}</span></div>
+      </section>
+
+      <section class="card">
+        <h2>📦 Estado del pedido</h2>
+        ${timeline}
+      </section>
     </div>
 
-    ${v.nota?`<div class="box"><h3>Notas / Observaciones</h3><div style="font-size:14px;white-space:pre-wrap">${esc(v.nota)}</div></div>`:''}
+    ${v.nota?`<section class="card"><h2>📝 Notas / Observaciones</h2><div class="nota">${esc(v.nota)}</div></section>`:''}
 
-    <div class="box"><h3>Totales</h3>
-      ${v.factura?`<div class="tot"><span>Subtotal (sin IVA)</span><span>${money(v.total)}</span></div>
-      <div class="tot"><span>IVA (21%)</span><span>${money(v.iva||0)}</span></div>
-      <div class="tot"><span>Total con IVA</span><span>${money(granTotal(v))}</span></div>`
-      :`<div class="tot"><span>Total</span><span>${money(v.total)}</span></div>`}
-      <div class="tot"><span>Cobrado</span><span>${money(cobrado)}</span></div>
-      ${(v.pagos&&v.pagos.length)?`<div style="font-size:12px;color:#6b7280;padding:2px 0 6px">Pagos: ${v.pagos.map(p=>money(p.monto)+(p.metodo?` (${esc(p.metodo)})`:'')).join(' · ')}</div>`:''}
-      <div class="tot big"><span>Saldo pendiente</span><span>${money(v.saldo)}</span></div>
-    </div>
+  </div>
   </body></html>`;
   const w=window.open("","_blank");
   if(!w){ toast("⚠️ Permití las ventanas emergentes para ver la orden"); return; }
@@ -1814,7 +1968,18 @@ function guardarEdicionVenta(nro){
   const t=editTotales(); const nota=($("#edNota")?.value||"").trim();
   editAplicarStockDelta();
   const cambios=[];
-  if(JSON.stringify(editDraft.itemsOrig)!==JSON.stringify(editDraft.items.map(i=>({nombre:i.nombre,cant:i.cant})))) cambios.push("productos");
+  /* Detalle de qué productos entraron y cuáles salieron: en el historial no
+     alcanza con decir "productos", hay que poder ver qué pileta se sacó. */
+  const antes={};  editDraft.itemsOrig.forEach(i=>antes[i.nombre]=(antes[i.nombre]||0)+i.cant);
+  const despues={}; editDraft.items.forEach(i=>despues[i.nombre]=(despues[i.nombre]||0)+i.cant);
+  const agregados=[], quitados=[];
+  [...new Set([...Object.keys(antes),...Object.keys(despues)])].forEach(n=>{
+    const d=(despues[n]||0)-(antes[n]||0);
+    if(d>0) agregados.push(`${d}× ${n}`);
+    else if(d<0) quitados.push(`${-d}× ${n}`);
+  });
+  if(quitados.length)  cambios.push("quitó "+quitados.join(" / "));
+  if(agregados.length) cambios.push("agregó "+agregados.join(" / "));
   if((v.nota||"")!==nota) cambios.push("nota");
   if(!!v.factura!==editDraft.factura) cambios.push(editDraft.factura?"IVA agregado":"IVA quitado");
   if(editDraft.nuevosPagos.length) cambios.push(`${editDraft.nuevosPagos.length} pago(s) nuevo(s)`);
@@ -2347,6 +2512,15 @@ function historialDesdeVentas(vts){
   return L;
 }
 const HISTORIAL = HAY_DATOS ? historialDesdeVentas(window.DATOS.ventas) : generarHistorial();
+/* Los reportes leen de HISTORIAL, que es una foto de las ventas armada al entrar
+   al sistema. Hay que rehacerla cada vez que se abren los reportes: si no, una
+   venta cancelada, editada o recién cargada no se ve reflejada hasta el próximo
+   login (por eso los reportes seguían contando ventas ya canceladas). */
+function refrescarHistorial(){
+  if(!window.SISTEMA_CONECTADO) return;   // sin base, el histórico es de ejemplo: no lo pisamos
+  HISTORIAL.length=0;
+  historialDesdeVentas(VENTAS).forEach(l=>HISTORIAL.push(l));
+}
 function vendedoresRep(){ return [...new Set(HISTORIAL.map(l=>l.vendedor))].sort((a,b)=>(""+a).localeCompare(""+b,'es')); }
 
 /* Estado de la sección Reportes */
@@ -2376,6 +2550,7 @@ function totalMes(year,mes,met,cat){
 }
 
 function viewReportes(){
+  refrescarHistorial();   // que los reportes muestren las ventas como están ahora
   if(!repDesde){ repDesde=`${new Date().getFullYear()}-01-01`; repHasta=hoyISO(); }
   if(repMes==null) repMes=new Date().getMonth();
   $("#main").innerHTML=`
