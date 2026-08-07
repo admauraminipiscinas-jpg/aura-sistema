@@ -4,15 +4,43 @@
    y el guardado para que todo quede en la base de datos.
    ============================================================ */
 
-/* `persistSession:false` = la sesión vive solo mientras la pestaña está abierta.
-   Al cerrarla o recargar hay que volver a poner usuario y contraseña, y no queda
-   ningún token guardado en la computadora. Es a propósito: las máquinas del local
-   las usa más de una persona y no puede pasar que el próximo entre con la sesión
-   del anterior. NO activar la persistencia de sesión sin hablarlo. */
+/* ====== SESIÓN ==============================================================
+   La sesión queda guardada SOLO si la persona tildó "Mantener sesión iniciada"
+   en la pantalla de entrada. Si la tildó, el token se guarda en esa computadora
+   y sobrevive a cerrar el navegador; si no, queda solo en memoria y al recargar
+   hay que volver a poner la contraseña.
+
+   En los dos casos la sesión se cierra sola después de 2 horas sin usar el
+   sistema. ESTO NO HAY QUE SACARLO: las computadoras del local las usa más de
+   una persona, y sin el corte por inactividad el siguiente que abre el sistema
+   entra con el usuario del anterior (un vendedor entrando como Maestro). El
+   tilde opcional + el corte por inactividad son lo que permite la comodidad de
+   no reingresar la contraseña sin volver a ese problema. */
+const RECORDAR_KEY   = 'aura.recordar';
+const ACTIVIDAD_KEY  = 'aura.ultimaActividad';
+const INACTIVIDAD_MS = 2 * 60 * 60 * 1000;   // 2 horas
+
+function recordarActivo(){ try{ return localStorage.getItem(RECORDAR_KEY)==='1'; }catch(_){ return false; } }
+
+/* Dónde se guarda el token: en la computadora o solo en memoria. */
+const _memoria = {};
+const almacenSesion = {
+  getItem(k){ return recordarActivo() ? localStorage.getItem(k) : (k in _memoria ? _memoria[k] : null); },
+  setItem(k,v){ if(recordarActivo()){ try{ localStorage.setItem(k,v); }catch(_){} } else _memoria[k]=v; },
+  removeItem(k){ try{ localStorage.removeItem(k); }catch(_){} delete _memoria[k]; }
+};
+
+/* Reloj de inactividad. */
+function marcarActividad(){ try{ localStorage.setItem(ACTIVIDAD_KEY, String(Date.now())); }catch(_){} }
+function sesionVencida(){
+  try{ const t = +(localStorage.getItem(ACTIVIDAD_KEY)||0); return t>0 && (Date.now()-t) > INACTIVIDAD_MS; }
+  catch(_){ return false; }
+}
+
 const SB = window.supabase.createClient(
   "https://dnamctecmutlmgblhnbg.supabase.co",
   "sb_publishable_GMWcvSFIPklV9e9PCb0c2g_GMKR_J-w",
-  { auth: { persistSession: false, autoRefreshToken: true } }
+  { auth: { persistSession: true, autoRefreshToken: true, storage: almacenSesion } }
 );
 /* Marca de que este archivo cargó: index.html la usa para avisar si falló. */
 window.SISTEMA_CONECTADO = true;
@@ -39,7 +67,7 @@ async function cargarTodo(){
   try{ const r=await SB.from('permisos').select('*'); if(!r.error) permData=r.data||[]; }catch(_){}
 
   PRODUCTOS.length=0; (p.data||[]).forEach(r=>PRODUCTOS.push({id:r.id,nombre:r.nombre,desc:r.descripcion||'',cat:r.categoria,precio:Number(r.precio),costo:Number(r.costo||0),stock:r.stock,descStock:r.descuenta_stock===true,activo:r.activo!==false}));
-  CLIENTES.length=0; (c.data||[]).forEach(r=>CLIENTES.push({id:r.id,nombre:r.nombre,apellido:r.apellido,dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,saldo:Number(r.saldo||0),activo:r.activo!==false}));
+  CLIENTES.length=0; (c.data||[]).forEach(r=>CLIENTES.push({id:r.id,nombre:r.nombre,apellido:r.apellido,dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,domicilio:r.domicilio||'',saldo:Number(r.saldo||0),activo:r.activo!==false}));
   ESTADOS.length=0; (e.data||[]).forEach(r=>ESTADOS.push({nombre:r.nombre,color:r.color||'gris'}));
   CATEGORIAS.length=0; (cat.data||[]).forEach(r=>CATEGORIAS.push(r.nombre));
   const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||''});});
@@ -86,6 +114,9 @@ window.ingresar = async function(){
   const email=raw.includes('@') ? raw.toLowerCase() : raw.toLowerCase().replace(/\s+/g,'-')+'@aura.local';
   const pass=$("#logPass").value;
   $("#logErr").style.color=""; $("#logErr").textContent="Ingresando…";
+  /* La preferencia se guarda ANTES de entrar: el token se escribe durante el
+     login y tiene que saber si va a la computadora o solo a la memoria. */
+  try{ localStorage.setItem(RECORDAR_KEY, ($("#logRecordar")&&$("#logRecordar").checked) ? '1' : '0'); }catch(_){}
   const {data,error}=await SB.auth.signInWithPassword({email,password:pass});
   if(error){ $("#logErr").textContent="Usuario o contraseña incorrectos."; return; }
   const {data:perfil,error:pe}=await SB.from('perfiles').select('*').eq('id',data.user.id).single();
@@ -98,18 +129,35 @@ window.ingresar = async function(){
 async function abrirApp(perfil){
   USUARIO_ACTUAL={nombre:perfil.nombre||'Usuario', ap:perfil.apellido||'', rol:perfil.rol};
   await cargarTodo();
+  marcarActividad();
   $("#logErr").textContent="";
   $("#loginScreen").style.display="none"; $("#appWrap").style.display="";
   actualizarTopbarUsuario();
   nav(tabsPermitidas()[0]);
 }
 
+/* Volver a la pantalla de entrada. `motivo` se muestra en el cartel del login. */
+function volverAlLogin(motivo){
+  $("#appWrap").style.display="none"; $("#loginScreen").style.display="flex";
+  $("#logPass").value="";
+  const e=$("#logErr"); if(e){ e.style.color=""; e.textContent=motivo||""; }
+  const u=$("#logUser"); if(u) u.focus();
+}
+
 window.salir = async function(){
   try{ await SB.auth.signOut(); }catch(e){}
-  $("#appWrap").style.display="none"; $("#loginScreen").style.display="flex";
-  $("#logPass").value=""; $("#logErr").textContent="";
-  const u=$("#logUser"); if(u) u.focus();
+  /* Borramos la marca de actividad pero dejamos la preferencia del tilde, así
+     no hay que volver a tildarlo en la computadora propia cada vez. */
+  try{ localStorage.removeItem(ACTIVIDAD_KEY); }catch(_){}
+  volverAlLogin("");
 };
+
+/* Cierre automático cuando pasaron 2 horas sin tocar el sistema. */
+async function cerrarPorInactividad(){
+  try{ await SB.auth.signOut(); }catch(_){}
+  try{ localStorage.removeItem(ACTIVIDAD_KEY); }catch(_){}
+  volverAlLogin("Cerramos la sesión por seguridad: pasaron 2 horas sin usar el sistema.");
+}
 
 /* ---- Guardado: NUEVA VENTA (+ ítems, IVA, pago inicial, stock) ---- */
 /* Igual que el alta de cliente: sin esto, un doble clic en "Confirmar venta"
@@ -154,8 +202,17 @@ async function _confirmarVentaReal(){
   if(!carga.historica) descontarStockVenta(carrito);
   // Envío automático del remito por mail (no bloquea la pantalla).
   // El servidor arma el remito con los datos de la base a partir del número de venta.
+  /* Avisamos en pantalla si el correo salió o no. Antes el cartel decía
+     "remito a tal mail" apenas se guardaba la venta, sin esperar la respuesta:
+     si el envío fallaba (por ejemplo, porque venció la contraseña de Gmail)
+     nadie se enteraba y el cliente se quedaba sin su comprobante. */
   if(remito && c.mail){
-    enviarRemito({nro}).catch(e=>console.warn('Remito mail:',e));
+    enviarRemito({nro})
+      .then(()=>toast(`📧 Remito enviado a ${c.mail}`))
+      .catch(e=>{
+        console.warn('Remito mail:',e);
+        toast(`⚠️ La venta #${nro} se guardó, pero NO se pudo enviar el remito a ${c.mail}. Reenvialo con el botón 📤.`);
+      });
   }
   VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
   /* La auditoría registra quién la cargó (nombreUsuario) y, si es histórica,
@@ -163,7 +220,7 @@ async function _confirmarVentaReal(){
   auditar(carga.historica?"Venta cargada (histórica)":"Venta creada","venta",nro,
     `Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`+
     (carga.historica?` · fecha ${fmtFechaCorta(carga.fecha)} · vendedor ${carga.vendedor}`:''));
-  toast(`✅ Venta #${nro} guardada`+(carga.historica?` · ${fmtFechaCorta(carga.fecha)} · ${carga.vendedor}`:'')+(remito&&c.mail?` · remito a ${c.mail}`:""));
+  toast(`✅ Venta #${nro} guardada`+(carga.historica?` · ${fmtFechaCorta(carga.fecha)} · ${carga.vendedor}`:'')+(remito&&c.mail?` · enviando remito…`:""));
   respaldarEnSheet(nro);
   nav("ventas");
 }
@@ -285,8 +342,9 @@ async function _guardarClienteReal(){
   if(faltan){ toast("⚠️ Completá todos los campos obligatorios (*)"); return; }
   const mail=campos.mail.value.trim();
   if(!/^\S+@\S+\.\S+$/.test(mail)){ campos.mail.classList.add("err"); toast("⚠️ Revisá el email del cliente"); return; }
-  const datos={nombre:campos.nombre.value.trim(),apellido:campos.apellido.value.trim(),dni:campos.dni.value.trim(),tel:campos.tel.value.trim(),provincia:campos.provincia.value,localidad:campos.localidad.value.trim(),mail};
-  const fila={nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,telefono:datos.tel,email:datos.mail,provincia:datos.provincia,localidad:datos.localidad};
+  const datos={nombre:campos.nombre.value.trim(),apellido:campos.apellido.value.trim(),dni:campos.dni.value.trim(),tel:campos.tel.value.trim(),provincia:campos.provincia.value,localidad:campos.localidad.value.trim(),mail,
+    domicilio:(($("#cDomicilio")||{}).value||"").trim()};   // opcional: queda vacío si no lo cargan
+  const fila={nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,telefono:datos.tel,email:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio};
   const editId = (modalModo==="venta" && clienteActual) ? clienteActual.id
                : (typeof clienteEditId!=="undefined" && clienteEditId!=null) ? clienteEditId : null;
 
@@ -307,11 +365,11 @@ async function _guardarClienteReal(){
   if(editId!=null){
     const r=await SB.from('clientes').update(fila).eq('id',editId); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
     if(modalModo==="venta" && clienteActual) Object.assign(clienteActual,datos);
-    const reg=CLIENTES.find(x=>x.id===editId); if(reg) Object.assign(reg,{nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad});
+    const reg=CLIENTES.find(x=>x.id===editId); if(reg) Object.assign(reg,{nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio});
   } else {
     const {data,error}=await SB.from('clientes').insert(fila).select().single(); if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return; }
     const id=data.id;
-    CLIENTES.push({id,nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,saldo:0,activo:true});
+    CLIENTES.push({id,nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio,saldo:0,activo:true});
     if(modalModo==="venta") clienteActual={id,...datos};
   }
   cerrarModal();
@@ -490,16 +548,53 @@ window.confirmarCobros = async function(nro){
   }
 };
 
-/* Acá había una restauración automática de sesión. Se quitó a propósito
-   (2026-08-02): en una computadora compartida hacía que el siguiente en abrir
-   el sistema entrara con el usuario del anterior — por ejemplo, un vendedor
-   entrando como Maestro. El sistema siempre tiene que pedir usuario y
-   contraseña. No volver a agregarla.
+/* HISTORIAL DE ESTA DECISIÓN — leer antes de tocar la sesión.
+   · 2026-08-02: se había puesto restauración automática de sesión y se quitó,
+     porque en una computadora compartida el siguiente en abrir el sistema
+     entraba con el usuario del anterior (un vendedor entrando como Maestro).
+   · 2026-08-07: la dueña pidió volver a tenerla, pero resuelta de otra forma
+     para no repetir ese problema. Ahora la sesión se guarda SOLO si la persona
+     tilda "Mantener sesión iniciada" (en la computadora compartida se deja sin
+     tildar), y ADEMÁS se cierra sola a las 2 horas sin uso.
+   La implementación está al principio y al final de este archivo. Lo que no hay
+   que hacer es dejar la sesión guardada para todos y sin corte por inactividad:
+   eso es exactamente lo que hubo que revertir en agosto. */
 
-   Limpieza: las sesiones que esa versión dejó guardadas en las computadoras
-   ya no las usa nadie, pero las borramos para no dejar el token dando vueltas. */
-try{
-  Object.keys(localStorage)
-    .filter(k=>k.startsWith('sb-') && k.includes('auth-token'))
-    .forEach(k=>localStorage.removeItem(k));
-}catch(_){}
+/* ====== ARRANQUE: retomar la sesión y vigilar la inactividad ==============
+   Si quedó una sesión guardada (tilde "Mantener sesión iniciada") y no pasaron
+   más de 2 horas sin uso, entramos derecho sin pedir la contraseña. */
+window.addEventListener('load', async function(){
+  /* Dejamos el tilde como lo eligió la última vez en esta computadora. */
+  const chk = $("#logRecordar"); if(chk) chk.checked = recordarActivo();
+
+  try{
+    if(sesionVencida()){
+      try{ await SB.auth.signOut(); }catch(_){}
+      try{ localStorage.removeItem(ACTIVIDAD_KEY); }catch(_){}
+      return;
+    }
+    const {data:{session}} = await SB.auth.getSession();
+    if(!session || !session.user) return;                 // no hay sesión: login normal
+    const {data:perfil} = await SB.from('perfiles').select('*').eq('id',session.user.id).single();
+    if(!perfil || perfil.activo===false){ try{ await SB.auth.signOut(); }catch(_){} return; }
+    await abrirApp(perfil);
+  }catch(_){ /* si algo falla, simplemente queda la pantalla de entrada */ }
+});
+
+/* Cada acción de la persona corre el reloj. Anotamos como mucho una vez cada
+   30 segundos para no estar escribiendo todo el tiempo. */
+let _ultimaMarca = 0;
+['click','keydown','touchstart','scroll'].forEach(function(ev){
+  document.addEventListener(ev, function(){
+    const ahora = Date.now();
+    if(ahora - _ultimaMarca < 30000) return;
+    _ultimaMarca = ahora; marcarActividad();
+  }, {passive:true});
+});
+
+/* Control cada minuto: si venció, cierra sola. */
+setInterval(function(){
+  const app = $("#appWrap");
+  if(!app || app.style.display === "none") return;   // no hay nadie adentro
+  if(sesionVencida()) cerrarPorInactividad();
+}, 60000);

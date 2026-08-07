@@ -214,6 +214,11 @@
     <div class="login-welcome">¡Bienvenidos al Sistema de Aura Minipiscinas!</div>
     <div class="field" style="text-align:left;margin-bottom:14px"><label>Usuario</label><input id="logUser" type="text" autocomplete="username" placeholder="tu usuario" onkeydown="if(event.key==='Enter')ingresar()"></div>
     <div class="field" style="text-align:left;margin-bottom:8px"><label>Contraseña</label><input id="logPass" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')ingresar()"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;text-align:left">
+      <input type="checkbox" id="logRecordar" style="width:auto;margin:0">
+      <label for="logRecordar" style="font-size:13px;font-weight:600;color:#374151;cursor:pointer;text-transform:none;letter-spacing:0">Mantener sesión iniciada en esta computadora</label>
+    </div>
+    <div class="login-hint" style="margin:0 0 12px">No lo tildes en computadoras compartidas: el próximo que abra el sistema entraría con tu usuario.</div>
     <div id="logErr" class="login-err"></div>
     <button class="btn btn-green" style="width:100%;justify-content:center;font-size:16px" onclick="ingresar()">Ingresar</button>
   </div>
@@ -335,6 +340,11 @@ let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
 const IVA_PCT = 0.21;
 const SENA_VENDEDOR = 150000; // Seña fija que cobran los vendedores (campo bloqueado para el rol Vendedor)
+/* Mail de contacto que LEE el cliente en el remito y en el mail de ejemplo.
+   NO es la casilla desde la que salen los correos (esa es GMAIL_USER y se
+   cambia en Vercel). Si cambia, actualizar también MAIL_CONTACTO en
+   api/enviar-remito.js para que los dos remitos digan lo mismo. */
+const MAIL_CONTACTO = "auraminipiscinas@gmail.com";
 function nombreUsuario(){ return `${USUARIO_ACTUAL.nombre} ${USUARIO_ACTUAL.ap}`; }
 function esVendedor(){ return USUARIO_ACTUAL.rol==="Vendedor"; }
 function esAdmin(){ return USUARIO_ACTUAL.rol==="Administrador"; }
@@ -692,6 +702,12 @@ function abrirModalCliente(modo, id){
             <div class="field"><label>Localidad <span class="req">*</span></label><input id="cLocalidad" value="${esc(c.localidad)}" placeholder="Ej. La Plata"></div>
           </div>
           <div class="row" style="margin-top:12px">
+            <div class="field" style="flex:1 1 100%"><label>Domicilio <span class="legend" style="text-transform:none;letter-spacing:0;font-weight:600">(opcional)</span></label>
+              <input id="cDomicilio" value="${esc(c.domicilio)}" placeholder="Calle, número, referencias para la entrega">
+              <div class="help">🏠 Va acá, no en Localidad: en el listado de ventas se muestra solo la localidad, así la columna queda corta y prolija. El domicilio se ve al abrir la orden con el 👁️.</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px">
             <div class="field" style="flex:1 1 100%"><label>Email <span class="req">*</span></label><input id="cMail" type="email" value="${esc(c.mail)}" placeholder="cliente@correo.com">
               <div class="help">📧 A este correo se enviará el remito con el detalle de la venta cargada.</div>
             </div>
@@ -726,18 +742,19 @@ function guardarCliente(){
   const datos = {
     nombre:campos.nombre.value.trim(), apellido:campos.apellido.value.trim(),
     dni:campos.dni.value.trim(), tel:campos.tel.value.trim(),
-    provincia:campos.provincia.value, localidad:campos.localidad.value.trim(), mail
+    provincia:campos.provincia.value, localidad:campos.localidad.value.trim(), mail,
+    domicilio:($("#cDomicilio")?.value||"").trim()   // opcional: no se valida
   };
 
   if(modalModo==="venta" && clienteActual){
     // editar el cliente ya cargado en la venta
     Object.assign(clienteActual, datos);
     const reg = CLIENTES.find(x=>x.id===clienteActual.id);
-    if(reg) Object.assign(reg, {nombre:`${datos.nombre} ${datos.apellido}`, dni:datos.dni, tel:datos.tel, mail:datos.mail, provincia:datos.provincia, localidad:datos.localidad});
+    if(reg) Object.assign(reg, {nombre:`${datos.nombre} ${datos.apellido}`, dni:datos.dni, tel:datos.tel, mail:datos.mail, provincia:datos.provincia, localidad:datos.localidad, domicilio:datos.domicilio});
   } else {
     // alta de cliente nuevo
     const id = Math.max(0, ...CLIENTES.map(c=>c.id)) + 1;
-    const nuevo = {id, nombre:`${datos.nombre} ${datos.apellido}`, apellido:datos.apellido, dni:datos.dni, tel:datos.tel, mail:datos.mail, provincia:datos.provincia, localidad:datos.localidad, saldo:0};
+    const nuevo = {id, nombre:`${datos.nombre} ${datos.apellido}`, apellido:datos.apellido, dni:datos.dni, tel:datos.tel, mail:datos.mail, provincia:datos.provincia, localidad:datos.localidad, domicilio:datos.domicilio, saldo:0};
     CLIENTES.push(nuevo);
     if(modalModo==="venta") clienteActual = {id, ...datos};
   }
@@ -1397,6 +1414,7 @@ function abrirOrden(nro){
         <div class="dato"><div class="lbl">Email</div><div class="val">${c.mail?`<a href="mailto:${esc(c.mail)}">${esc(c.mail)} ✉️</a>`:'—'}</div></div>
         <div class="dato"><div class="lbl">Localidad</div><div class="val">${esc(c.localidad||v.localidad||'—')}</div></div>
         <div class="dato"><div class="lbl">Provincia</div><div class="val">${esc(c.provincia||v.provincia||'—')}</div></div>
+        ${c.domicilio?`<div class="dato" style="grid-column:1/-1"><div class="lbl">🏠 Domicilio de entrega</div><div class="val">${esc(c.domicilio)}</div></div>`:''}
       </div>
     </section>
 
@@ -1503,10 +1521,9 @@ function abrirRemito(nro){
       <p>Con el botón que se encuentra abajo usted podrá seguir el estado de su orden actualizado.</p>
       <div><span class="verestado">Ver estado</span></div>
       <p class="medio">¡La factura digital colabora con el cuidado del medio ambiente!</p>
-      <p class="nota">¡No responder! Este correo no puede recibir mensajes, por este motivo te agradecemos que no respondas este email. Para contactarte con Aura Minipiscinas comunicarse por cualquiera de las vías de contacto mencionadas en la parte inferior de este e-mail.</p>
       <div class="efoot">
         <div>Vendedor: ${esc(v.vendedor)}<br>@aura.minipiscinas</div>
-        <div class="der">adm.auraminipiscinas@gmail.com</div>
+        <div class="der">${MAIL_CONTACTO}</div>
       </div>
       <div class="egen">Mensaje generado por SISTEMAS DE GESTIÓN PARA PYMES</div>
     </div>
@@ -1625,7 +1642,7 @@ function descargarRemitoPDF(nro){
   y+=16; doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(0);
   doc.text("Documento no válido como factura", M, y);
   doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text("Aura Minipiscinas — @aura.minipiscinas — adm.auraminipiscinas@gmail.com", W/2, H-28, {align:"center"});
+  doc.text("Aura Minipiscinas — @aura.minipiscinas — "+MAIL_CONTACTO, W/2, H-28, {align:"center"});
 
   doc.save(`Venta_nro_${v.nro}_Comprobante_R.pdf`);
   toast(`✅ PDF del remito de la venta #${v.nro} generado`);
