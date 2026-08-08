@@ -281,9 +281,39 @@ async function respaldarEnSheet(nro){
     });
     const j = await r.json();
     if(j.sinConfigurar) return;                       // todavía no se conectó la planilla
-    if(!j.ok) console.warn('Copia en la planilla:', j.error||'no se pudo guardar');
+    if(!j.ok){
+      console.warn('Copia en la planilla:', j.error||'no se pudo guardar', j.respuesta||'');
+      /* Avisamos en pantalla una sola vez por sesión: si la copia de seguridad
+         no está funcionando hay que enterarse, pero sin repetir el cartel en
+         cada venta. */
+      if(!window.__avisoSheet){
+        window.__avisoSheet = true;
+        toast("⚠️ La venta se guardó, pero NO se copió a la planilla de Google. Probá la conexión desde Ventas → ⚙️.");
+      }
+    }
   }catch(ex){ console.warn('Copia en la planilla:', ex.message||ex); }
 }
+
+/* Prueba de la conexión con la planilla: manda la última venta y muestra en
+   pantalla el resultado exacto, para no tener que mirar los registros de Vercel. */
+window.probarSheet = async function(){
+  const v = VENTAS[0];
+  if(!v){ toast("No hay ventas para probar"); return; }
+  toast("Probando la conexión con la planilla…");
+  try{
+    const {data:{session}} = await SB.auth.getSession();
+    const r = await fetch('/api/backup-sheet',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+(session?session.access_token:'')},
+      body: JSON.stringify({nro:v.nro})
+    });
+    let j={}; try{ j = await r.json(); }catch(_){ }
+    if(j.sinConfigurar){ toast("⚠️ Faltan cargar SHEET_WEBHOOK_URL y SHEET_TOKEN en Vercel (y hacer Redeploy)."); return; }
+    if(j.ok){ window.__avisoSheet=false; toast(`✅ Funciona: la venta #${v.nro} quedó escrita en la planilla`); return; }
+    toast("⚠️ "+(j.error||"No se pudo escribir en la planilla"));
+    console.warn('Prueba de planilla:', j);
+  }catch(ex){ toast("⚠️ Error de conexión: "+(ex.message||ex)); }
+};
 
 /* ---- Envío de correos al cliente ----
    Solo mandamos el número de venta: el servidor resuelve el destinatario y los

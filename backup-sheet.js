@@ -76,12 +76,32 @@ export default async function handler(req, res) {
       body: JSON.stringify(payload)
     });
     const texto = await r.text();
-    let j; try { j = JSON.parse(texto); } catch (_) { j = { ok: r.ok, respuesta: texto.slice(0, 200) }; }
 
-    if (!r.ok || j.ok === false) {
-      return res.status(502).json({ error: j.error || 'La planilla rechazó el dato' });
+    /* OJO: cuando la aplicación web de Apps Script no está publicada para
+       "Cualquier usuario", Google NO da error: responde 200 con el HTML de la
+       pantalla de login. Si solo miráramos el código de estado, daríamos por
+       bueno un envío que nunca se escribió. Por eso exigimos que la respuesta
+       sea el JSON que devuelve nuestro script. */
+    let j = null;
+    try { j = JSON.parse(texto); } catch (_) { /* no es JSON: ver abajo */ }
+
+    if (!j || typeof j.ok === 'undefined') {
+      const pideLogin = /accounts\.google\.com|ServiceLogin|iniciar sesión|sign in/i.test(texto);
+      return res.status(502).json({
+        error: pideLogin
+          ? 'La planilla pidió iniciar sesión. En Apps Script → Implementar → editar la implementación, poné "Quién tiene acceso: Cualquier usuario".'
+          : 'La dirección no respondió como se esperaba. Revisá que sea la que termina en /exec y que la implementación sea de tipo "Aplicación web".',
+        respuesta: texto.slice(0, 300)
+      });
     }
-    return res.status(200).json({ ok: true });
+    if (j.ok === false) {
+      return res.status(502).json({
+        error: j.error === 'Token inválido'
+          ? 'La contraseña no coincide: el TOKEN del Apps Script tiene que ser igual a SHEET_TOKEN en Vercel.'
+          : (j.error || 'La planilla rechazó el dato')
+      });
+    }
+    return res.status(200).json({ ok: true, fila: j.fila || null });
 
   } catch (e) {
     return res.status(500).json({ error: e.message });
