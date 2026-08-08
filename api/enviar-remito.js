@@ -12,6 +12,12 @@ import 'jspdf-autotable';
 // El manual se sube al repo (raíz) y se sirve en esta URL. Si cambia el dominio, actualizar acá.
 const MANUAL_URL = 'https://aura-sistema-sigma.vercel.app/manual-usuario-aura.pdf';
 
+/* Mail de contacto que LEE el cliente en el correo y en el pie del remito.
+   Ojo: NO es la casilla desde la que sale el correo (esa es GMAIL_USER, y se
+   cambia en Vercel sin tocar código). Si cambia este, hay que cambiarlo también
+   en index.html (constante MAIL_CONTACTO) para que los dos remitos coincidan. */
+const MAIL_CONTACTO = 'auraminipiscinas@gmail.com';
+
 const montoAR = n => Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function generarPDF(v) {
@@ -95,7 +101,7 @@ function generarPDF(v) {
   y += 16; doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
   doc.text('Documento no válido como factura', M, y);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(120);
-  doc.text('Aura Minipiscinas — @aura.minipiscinas — adm.auraminipiscinas@gmail.com', W / 2, H - 28, { align: 'center' });
+  doc.text('Aura Minipiscinas — @aura.minipiscinas — ' + MAIL_CONTACTO, W / 2, H - 28, { align: 'center' });
   return Buffer.from(doc.output('arraybuffer'));
 }
 
@@ -133,7 +139,7 @@ function emailHTML(v, tipo) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7faf9;border:1px solid #e8efec;border-radius:14px">
         <tr><td style="padding:16px 20px">
           <div style="font-size:14px;line-height:2.2;color:#33403b">
-            <span style="display:inline-block;width:26px">📧</span><a href="mailto:adm.auraminipiscinas@gmail.com" style="color:#3f6f5e;text-decoration:none">adm.auraminipiscinas@gmail.com</a><br>
+            <span style="display:inline-block;width:26px">📧</span><a href="mailto:${MAIL_CONTACTO}" style="color:#3f6f5e;text-decoration:none">${MAIL_CONTACTO}</a><br>
             <span style="display:inline-block;width:26px">📸</span><a href="https://instagram.com/Aura.minipiscinas" style="color:#3f6f5e;text-decoration:none">@Aura.minipiscinas</a><br>
             <span style="display:inline-block;width:26px">🌐</span><a href="https://www.minipiscinasaura.com" style="color:#3f6f5e;text-decoration:none">www.minipiscinasaura.com</a>
           </div>
@@ -146,7 +152,6 @@ function emailHTML(v, tipo) {
     </td></tr>
     <tr><td style="padding:20px 40px 28px;text-align:center;border-top:1px solid #f0f3f2">
       ${v.vendedor ? `<div style="font-size:11.5px;color:#9aa6a1;line-height:1.6">Te atendió: ${esc(v.vendedor)}</div>` : ''}
-      <div style="font-size:11px;color:#c4ccc9;margin-top:8px">Este es un correo automático; para cualquier consulta usá los canales de arriba.</div>
     </td></tr>
   </table>
 </td></tr>
