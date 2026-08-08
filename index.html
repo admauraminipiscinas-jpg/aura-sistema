@@ -203,6 +203,20 @@
   .lb-2{background:linear-gradient(180deg,#f6f7f9,#fff);border-color:#cbd5e1}
   .lb-row-1 td{background:#fffbeb}
   .lb-row-2 td{background:#f6f7f9}
+  /* Choferes */
+  .chof-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+  .chof-card{background:#fff;border:1px solid var(--linea);border-radius:14px;padding:14px 16px;cursor:pointer;
+             transition:transform .12s,box-shadow .12s,border-color .12s;box-shadow:var(--sombra)}
+  .chof-card:hover{border-color:var(--verde);transform:translateY(-2px);box-shadow:0 6px 18px rgba(63,111,94,.15)}
+  .chof-card.sel{border-color:var(--verde);background:#f2f8f5;box-shadow:inset 0 0 0 1px var(--verde)}
+  .chof-card .n{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .chof-card .v{font-size:21px;font-weight:800;color:var(--rojo);margin-top:6px}
+  .chof-card .v.ok{color:var(--ok)}
+  .chof-card .s{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .chof-extra{font-size:11.5px;color:var(--muted)}
+  td.r,th.r{text-align:right}
+  td.r{white-space:nowrap;font-variant-numeric:tabular-nums}
+  tfoot td{border-top:2px solid var(--linea);padding:12px 10px}
 </style>
 </head>
 <body>
@@ -321,6 +335,7 @@ const PERMISOS_LISTA = [
   {k:"ver_reportes",       t:"Acceder a Reportes"},
   {k:"ver_auditoria",      t:"Acceder a Auditoría / Historial"},
   {k:"ver_ranking",        t:"Acceder a la sección Equipo de ventas"},
+  {k:"ver_choferes",       t:"Acceder a Choferes (reparto y rendiciones)"},
   {k:"editar_venta",       t:"Editar ventas (productos, notas, pagos, IVA)"},
   {k:"cancelar_venta",     t:"Cancelar ventas"},
   {k:"cambiar_estado",     t:"Cambiar el estado de las ventas"},
@@ -332,9 +347,9 @@ const PERMISOS_LISTA = [
 ];
 /* Valores por defecto (se sobreescriben con lo guardado en la base) */
 const PERMISOS_DEFAULT = {
-  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:1,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
-  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_stock:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
-  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_clientes:0,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
+  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:1,ver_clientes:1,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
+  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_clientes:0,ver_productos:1,ver_stock:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
+  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_clientes:0,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
 };
 let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
@@ -352,13 +367,14 @@ function esMaestro(){ return USUARIO_ACTUAL.rol==="Maestro"; }
 /* Motor de permisos: el Maestro siempre puede todo; el resto según la matriz configurable. */
 function puede(k){ if(esMaestro()) return true; const r=PERMISOS[USUARIO_ACTUAL.rol]; return !!(r && r[k]); }
 function puedeUsuarios(){ return puede("gestionar_usuarios"); }  // compat: gestionar usuarios/roles
-const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",ranking:"ver_ranking",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
+const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",ranking:"ver_ranking",choferes:"ver_choferes",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
 function tabsPermitidas(){ return Object.keys(TAB_PERM).filter(t=>puede(TAB_PERM[t])); }
 
 const TABS = [
   {id:"vender",   ic:"🛒", txt:"Vender"},
   {id:"ventas",   ic:"📋", txt:"Ventas"},
   {id:"ranking",  ic:"🤝", txt:"Equipo de ventas"},
+  {id:"choferes", ic:"🚚", txt:"Choferes"},
   {id:"clientes", ic:"👥", txt:"Clientes"},
   {id:"productos",ic:"🏷️", txt:"Productos"},
   {id:"usuarios", ic:"🔐", txt:"Usuarios"},
@@ -394,12 +410,13 @@ const COLORES = {
   gris:{bg:"#e5e7eb",fg:"#374151"},
 };
 let ESTADOS = [
-  {nombre:"Presupuesto",            color:"gris"},
-  {nombre:"Procesando pedido",      color:"amarillo"},
-  {nombre:"En fabricación",         color:"azul"},
-  {nombre:"Pedido Terminado",       color:"violeta"},
-  {nombre:"Entregado al Cliente",   color:"verde"},
-  {nombre:"En servicio de Post Venta", color:"naranja"},
+  {nombre:"Procesando pedido",       color:"amarillo"},
+  {nombre:"En camino Omar",          color:"azul"},
+  {nombre:"En camino Santiago",      color:"azul"},
+  {nombre:"En camino Diego",         color:"azul"},
+  {nombre:"En camino Flete",         color:"violeta"},
+  {nombre:"Entregado al cliente",    color:"verde"},
+  {nombre:"En servicio de post venta", color:"naranja"},
 ];
 let estadoDraft = []; // copia de trabajo al editar el catálogo
 
@@ -456,7 +473,7 @@ function nav(v){
   vistaActual = v;
   renderSidebar();
   $("#side").classList.remove("open");
-  ({vender:viewVender,ventas:viewVentas,ranking:viewRanking,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
+  ({vender:viewVender,ventas:viewVentas,ranking:viewRanking,choferes:viewChoferes,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
 }
 
 /* ====== VENDER (simplificado) ====== */
@@ -893,24 +910,28 @@ function diffDias(iso){ if(!iso) return null; const a=new Date(hoyISO()+"T00:00:
 function entregaCell(v){
   if(!v.entrega) return "—";
   const f=fmtFechaCorta(v.entrega);
-  if(v.estado==="Entregado al Cliente" || v.estado==="En servicio de Post Venta") return `${f}<br><span class="cont cont-ok">✓ Entregado</span>`;
-  if(v.estado==="Presupuesto") return f;
+  /* Comparamos en minúsculas y por palabra clave: los estados se editan desde el
+     panel, así que no podemos depender de que estén escritos exacto. */
+  const est=(v.estado||"").toLowerCase();
+  if(est.includes("entregado") || est.includes("post venta")) return `${f}<br><span class="cont cont-ok">✓ Entregado</span>`;
+  if(est.includes("presupuesto")) return f;
   const d=diffDias(v.entrega);
   if(d>0)  return `${f}<br><span class="cont cont-rest" style="font-weight:800">${d} día${d===1?'':'s'} restante${d===1?'':'s'}</span>`;
   if(d===0) return `${f}<br><span class="cont cont-hoy" style="font-weight:800">Vence hoy</span>`;
   const r=-d; return `${f}<br><span class="cont cont-ret" style="font-weight:800">${r} día${r===1?'':'s'} de retraso</span>`;
 }
 function montoAR(n){ return (n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+/* Frase que ve el CLIENTE en el comprobante. Va por palabra clave, no por el
+   nombre exacto: los estados "En camino Omar / Santiago / Diego / Flete" llevan
+   adentro a quién le toca el reparto, que es información interna — al cliente
+   le decimos solamente que su pedido está en camino. */
 function fraseEstado(e){
-  const m={
-    "Presupuesto":"Le acercamos el detalle de su presupuesto.",
-    "Procesando pedido":"Su orden está siendo preparada.",
-    "En fabricación":"Su pileta ya está en fabricación.",
-    "Pedido Terminado":"¡Su pedido ya está terminado!",
-    "Entregado al Cliente":"¡Su pedido fue entregado! Muchas gracias por su compra.",
-    "En servicio de Post Venta":"Su pedido está en servicio de post venta."
-  };
-  return m[e]||"Su orden está siendo preparada.";
+  const est=(e||"").toLowerCase();
+  if(est.includes("en camino"))    return "Su pedido ya está en camino.";
+  if(est.includes("entregado"))    return "¡Su pedido fue entregado! Muchas gracias por su compra.";
+  if(est.includes("post venta"))   return "Su pedido está en servicio de post venta.";
+  if(est.includes("presupuesto"))  return "Le acercamos el detalle de su presupuesto.";
+  return "Su orden está siendo preparada.";
 }
 
 /* ====== VENDEDORES (cantidad de ventas por vendedor) ====== */
@@ -1269,12 +1290,28 @@ function abrirOrden(nro){
     : `<tr><td colspan="4" class="vacio">Esta venta no tiene productos cargados</td></tr>`;
 
   /* Seguimiento del pedido: marcamos hasta dónde llegó según el catálogo de estados. */
-  const idxAct = ESTADOS.findIndex(e=>e.nombre===v.estado);
+  /* Los estados "En camino Omar / Santiago / Diego / Flete" son alternativas
+     (va uno U otro), no etapas sucesivas: en el seguimiento van como un solo
+     paso, y cuando la venta está en uno de ellos se aclara con quién va. */
+  const pasos=[];
+  ESTADOS.forEach(e=>{
+    if(/^en camino/i.test(e.nombre)){
+      const grupo = pasos.find(p=>p.camino);
+      if(grupo){ grupo.nombres.push(e.nombre); return; }
+      pasos.push({camino:true, etiqueta:"En camino", nombres:[e.nombre]});
+    } else {
+      pasos.push({camino:false, etiqueta:e.nombre, nombres:[e.nombre]});
+    }
+  });
+  const idxAct = pasos.findIndex(p=>p.nombres.includes(v.estado));
   const timeline = v.cancelada
     ? `<div class="cancel">✖️ Esta venta fue cancelada</div>`
-    : `<ol class="tl">${ESTADOS.map((e,i)=>{
+    : `<ol class="tl">${pasos.map((p,i)=>{
         const cls = i<idxAct ? "ok" : (i===idxAct ? "now" : "next");
-        return `<li class="${cls}"><span class="dot"></span><span class="txt">${esc(e.nombre)}</span></li>`;
+        /* En el paso "En camino" mostramos quién lo lleva, pero solo si la venta
+           está justo ahí; si todavía no llegó, alcanza con "En camino". */
+        const txt = (p.camino && i===idxAct) ? esc(v.estado) : esc(p.etiqueta);
+        return `<li class="${cls}"><span class="dot"></span><span class="txt">${txt}</span></li>`;
       }).join("")}</ol>`;
 
   const telLimpio = String(c.tel||"").replace(/[^0-9]/g,"");
@@ -2076,6 +2113,366 @@ function guardarEstados(){
   cerrarModal();
   if($("#tVentas")) viewVentas(); // refresca filtro y colores
   toast("✅ Estados actualizados");
+}
+
+/* ====== CHOFERES (reparto y rendición de dinero) ==========================
+   Tres cosas separadas a propósito:
+     · Hoja de ruta  → lo que el chofer SE LLEVÓ (ventas en camino con él)
+     · Cuenta corriente → lo que COBRÓ y todavía no entregó a la empresa
+     · Historial     → los viajes ya rendidos (solo lectura)
+   Una venta nunca está en la cuenta corriente y en el historial al mismo
+   tiempo: al rendir, pasa de una a la otra. */
+
+let chofSel = null;      // chofer que se está mirando
+let chofTab = "ruta";    // "ruta" | "cuenta" | "historial"
+let cobrosChofer = [];   // borrador al registrar lo que cobró
+
+/* La lista de choferes sale de los estados "En camino X": si mañana agregás
+   "En camino Pedro" desde el panel de Estados, aparece solo acá. */
+function listaChoferes(){
+  return ESTADOS.filter(e=>/^en camino\s+/i.test(e.nombre||""))
+                .map(e=>e.nombre.replace(/^en camino\s+/i,"").trim())
+                .filter(Boolean);
+}
+function estadoDeChofer(ch){
+  const e = ESTADOS.find(x=>(x.nombre||"").toLowerCase() === ("en camino "+ch).toLowerCase());
+  return e ? e.nombre : ("En camino "+ch);
+}
+/* Ventas que el chofer tiene asignadas y todavía no entregó. */
+function rutaDe(ch){
+  return VENTAS.filter(v=>!v.cancelada && v.chofer===ch && /^en camino/i.test(v.estado||""));
+}
+/* Pagos que cobró ese chofer y todavía no rindió. */
+function pendientesDe(ch){
+  const out=[];
+  VENTAS.forEach(v=>(v.pagos||[]).forEach(p=>{
+    if(p.chofer===ch && !p.rendido) out.push({venta:v, pago:p});
+  }));
+  return out;
+}
+function debeChofer(ch){ return pendientesDe(ch).reduce((a,x)=>a+Number(x.pago.monto||0),0); }
+/* Rendiciones ya cerradas, agrupadas por fecha. */
+function historialDe(ch){
+  const g={};
+  VENTAS.forEach(v=>(v.pagos||[]).forEach(p=>{
+    if(p.chofer===ch && p.rendido && p.rendido_fecha){
+      const k=String(p.rendido_fecha).slice(0,10);
+      (g[k]=g[k]||{fecha:k, monto:0, quien:p.rendido_por||"", ventas:new Set()});
+      g[k].monto+=Number(p.monto||0); g[k].ventas.add(v.nro);
+    }
+  }));
+  return Object.values(g).sort((a,b)=>b.fecha.localeCompare(a.fecha));
+}
+
+function viewChoferes(){
+  const chs = listaChoferes();
+  if(!chs.length){
+    $("#main").innerHTML = `<h1 class="page">Choferes</h1>
+      <div class="card"><div class="empty">Todavía no hay choferes configurados.<br><br>
+      Se crean solos: en <b>Ventas → ⚙️ Estados</b> agregá un estado que empiece con
+      <b>"En camino"</b> (por ejemplo <i>En camino Pedro</i>) y va a aparecer acá.</div></div>`;
+    return;
+  }
+  if(!chofSel || !chs.includes(chofSel)) chofSel = chs[0];
+
+  const tarjetas = chs.map(ch=>{
+    const debe = debeChofer(ch), ruta = rutaDe(ch).length;
+    const sel = ch===chofSel;
+    return `<div class="chof-card ${sel?'sel':''}" onclick="chofSel='${esc(ch).replace(/'/g,"\\'")}';renderChofBody()">
+      <div class="n">${esc(ch)}</div>
+      <div class="v ${debe>0?'':'ok'}">${money(debe)}</div>
+      <div class="s">${ruta? ruta+' en camino · ':''}${debe>0?'sin rendir':'al día ✓'}</div>
+    </div>`;
+  }).join("");
+
+  $("#main").innerHTML = `
+    <h1 class="page">Choferes</h1>
+    <div class="hint">Acá seguís qué se llevó cada chofer y cuánta plata te tiene que rendir. La asignación se hace sola: cuando ponés una venta <b>"En camino Omar"</b>, aparece en la ruta de Omar.</div>
+    <div class="chof-kpis">${tarjetas}</div>
+    <div id="chofBody"></div>`;
+  renderChofBody();
+}
+
+function renderChofBody(){
+  const cont = $("#chofBody"); if(!cont) return;
+  document.querySelectorAll('.chof-card').forEach(el=>{
+    el.classList.toggle('sel', el.querySelector('.n').textContent===chofSel);
+  });
+  const tabBtn=(id,txt)=>`<button class="btn btn-sm ${chofTab===id?'btn-green':'btn-ghost'}" onclick="chofTab='${id}';renderChofBody()">${txt}</button>`;
+  cont.innerHTML = `
+    <div class="card" style="padding:8px;margin-bottom:16px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${tabBtn("ruta","📋 Hoja de ruta")}
+        ${tabBtn("cuenta","💰 Cuenta corriente")}
+        ${tabBtn("historial","📚 Rendiciones anteriores")}
+      </div>
+    </div>
+    ${chofTab==="ruta" ? htmlRuta() : chofTab==="cuenta" ? htmlCuenta() : htmlHistorial()}`;
+}
+
+/* ---------- 1) HOJA DE RUTA ---------- */
+function htmlRuta(){
+  const ch = chofSel, filas = rutaDe(ch);
+  if(!filas.length){
+    return `<div class="card"><div class="empty">${esc(ch)} no tiene ventas en camino.<br><br>
+      Para asignarle una, en <b>Ventas</b> ponele el estado <b>${esc(estadoDeChofer(ch))}</b>.</div></div>`;
+  }
+  let total=0;
+  const rows = filas.map(v=>{
+    const c = CLIENTES.find(x=>x.id===v.clienteId)||{};
+    const items = v.items||[];
+    const pileta = (items.find(i=>(i.categoria==="Minipiscinas")||/minipiscina|pileta/i.test(i.nombre||""))||{}).nombre || "—";
+    const extras = items.filter(i=>i.nombre!==pileta).map(i=>i.nombre).join(" + ") || "—";
+    const cobrar = Number(v.saldo||0); total += cobrar;
+    return `<tr>
+      <td><b>#${v.nro}</b></td>
+      <td><b>${esc(v.cliente)}</b></td>
+      <td>${esc(pileta)}</td>
+      <td class="chof-extra">${esc(extras)}</td>
+      <td>${esc(c.localidad||v.localidad||"—")}${c.domicilio?`<br><span class="chof-extra">${esc(c.domicilio)}</span>`:""}</td>
+      <td>${esc(c.tel||"—")}</td>
+      <td class="r">${money(granTotal(v))}</td>
+      <td class="r">${money(granTotal(v)-cobrar)}</td>
+      <td class="r">${cobrar>0?`<b style="color:var(--rojo)">${money(cobrar)}</b>`:`<span class="badge b-ent">YA PAGÓ</span>`}</td>
+    </tr>`;
+  }).join("");
+  return `
+    <div class="card">
+      <div class="toolbar">
+        <div><h3>📋 Hoja de ruta · ${esc(ch)}</h3><span class="legend">${filas.length} entrega${filas.length===1?'':'s'} · lo que se llevó</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${puede('exportar')?`<button class="btn btn-green btn-sm" onclick="exportarRutaExcel()">📊 Bajar Excel para el chofer</button>`:''}
+          <button class="btn btn-ghost btn-sm" onclick="abrirCobrosChofer()">💵 Registrar lo que cobró</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Venta</th><th>Cliente</th><th>Piscina</th><th>Lleva también</th><th>Dónde entrega</th><th>Teléfono</th><th class="r">Total</th><th class="r">Ya pagó</th><th class="r">A cobrar</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="8" style="text-align:right;font-weight:800">TOTAL QUE TIENE QUE TRAER ${esc(ch).toUpperCase()}</td><td class="r" style="font-size:17px;font-weight:800">${money(total)}</td></tr></tfoot>
+      </table></div>
+    </div>`;
+}
+
+/* ---------- 2) CUENTA CORRIENTE ---------- */
+function htmlCuenta(){
+  const ch = chofSel, pend = pendientesDe(ch), debe = debeChofer(ch);
+  if(!pend.length){
+    return `<div class="card"><div class="empty">✓ ${esc(ch)} está al día: no tiene plata sin rendir.</div></div>`;
+  }
+  const rows = pend.map(({venta,pago})=>{
+    const saldoCli = Number(venta.saldo||0);
+    return `<tr>
+      <td><b>#${venta.nro}</b></td>
+      <td><b>${esc(venta.cliente)}</b></td>
+      <td>${pago.fecha?fmtFechaCorta(pago.fecha):"—"}</td>
+      <td class="r"><b>${money(pago.monto)}</b></td>
+      <td>${saldoCli>0
+        ? `<span class="badge b-prod">El cliente sigue debiendo ${money(saldoCli)}</span>`
+        : `<span class="badge b-ent">COMPLETO</span>`}</td>
+    </tr>`;
+  }).join("");
+  return `
+    <div class="card">
+      <div class="toolbar">
+        <div><h3>💰 Cuenta corriente · ${esc(ch)}</h3><span class="legend">Lo que cobró y todavía no entregó a la empresa</span></div>
+        ${(esMaestro()||esAdmin())?`<button class="btn btn-green btn-sm" onclick="abrirRendir()">✅ Rendir todo · ${money(debe)}</button>`:''}
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Venta</th><th>Cliente</th><th>Cobró el</th><th class="r">Monto</th><th>Situación</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:16px">
+        <div class="l">Cobró a los clientes<b>${money(debe)}</b></div>
+        <div class="l">Debe rendir<b style="color:var(--rojo);font-size:22px">${money(debe)}</b></div>
+      </div>
+    </div>`;
+}
+
+/* ---------- 3) HISTORIAL (solo lectura) ---------- */
+function htmlHistorial(){
+  const ch = chofSel, hist = historialDe(ch);
+  if(!hist.length) return `<div class="card"><div class="empty">${esc(ch)} todavía no rindió ninguna vez.</div></div>`;
+  const rows = hist.map(h=>`<tr>
+      <td><b>${fmtFechaCorta(h.fecha)}</b></td>
+      <td>${h.ventas.size} venta${h.ventas.size===1?'':'s'} · #${[...h.ventas].sort((a,b)=>a-b).join(', #')}</td>
+      <td>${esc(h.quien||"—")}</td>
+      <td class="r"><b style="color:var(--ok)">${money(h.monto)}</b></td>
+    </tr>`).join("");
+  const tot = hist.reduce((a,h)=>a+h.monto,0);
+  return `
+    <div class="card">
+      <div class="toolbar"><div><h3>📚 Rendiciones anteriores · ${esc(ch)}</h3>
+        <span class="legend">Cierres ya hechos. No se editan: si hubo un error, se corrige con un movimiento nuevo.</span></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Fecha</th><th>Ventas</th><th>Recibió</th><th class="r">Monto</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="3" style="text-align:right;font-weight:800">TOTAL RENDIDO</td><td class="r" style="font-weight:800">${money(tot)}</td></tr></tfoot>
+      </table></div>
+    </div>`;
+}
+
+/* ---------- Registrar lo que cobró el chofer ---------- */
+function abrirCobrosChofer(){
+  if(!(esMaestro()||esAdmin())){ toast("Solo Administrador o Maestro pueden registrar cobros"); return; }
+  const ch = chofSel, filas = rutaDe(ch).filter(v=>Number(v.saldo||0)>0);
+  if(!filas.length){ toast("No hay nada para cobrar en la ruta de "+ch); return; }
+  cobrosChofer = filas.map(v=>({nro:v.nro, cliente:v.cliente, debe:Number(v.saldo||0), cobro:Number(v.saldo||0)}));
+  renderCobrosChofer();
+}
+function renderCobrosChofer(){
+  const ch = chofSel;
+  const filas = cobrosChofer.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed var(--linea);flex-wrap:wrap">
+      <div style="flex:1;min-width:170px"><b>#${c.nro}</b> ${esc(c.cliente)}<br><span class="legend">Tiene que cobrar ${money(c.debe)}</span></div>
+      <div class="money-input" style="flex:0 0 150px"><span>$</span>
+        <input type="number" class="no-spin" value="${c.cobro}" min="0" max="${c.debe}" oninput="cobrosChofer[${i}].cobro=Math.max(0,Math.min(${c.debe},+this.value||0));cobrosChoferTot()">
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="cobrosChofer[${i}].cobro=0;renderCobrosChofer()" title="No cobró nada de esta">No cobró</button>
+    </div>`).join("");
+  $("#modalRoot").innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+      <div class="modal" style="max-width:620px">
+        <header><h3>💵 Lo que cobró ${esc(ch)}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+        <div class="body">
+          <div class="help" style="margin-top:0">Poné lo que <b>realmente</b> trajo de cada cliente. Si cobró de menos, dejá el monto que cobró: la diferencia le queda debiendo el cliente, no el chofer.</div>
+          <div style="margin-top:14px">${filas}</div>
+          <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:16px" id="cobChofTot"></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+          <button class="btn btn-green" id="btnGuardarCobrosChofer" onclick="guardarCobrosChofer()">Guardar cobros</button>
+        </div>
+      </div>
+    </div>`;
+  cobrosChoferTot();
+}
+function cobrosChoferTot(){
+  const el=$("#cobChofTot"); if(!el) return;
+  const t=cobrosChofer.reduce((a,c)=>a+Number(c.cobro||0),0);
+  const d=cobrosChofer.reduce((a,c)=>a+Number(c.debe||0),0);
+  el.innerHTML=`<div class="l">Tenía que cobrar<b>${money(d)}</b></div>
+    <div class="l">Cobró<b class="green">${money(t)}</b></div>
+    <div class="l">Quedó sin cobrar<b class="${d-t>0?'red':'green'}">${money(d-t)}</b></div>`;
+}
+
+/* ---------- Rendir ---------- */
+function abrirRendir(){
+  const ch = chofSel, debe = debeChofer(ch);
+  if(debe<=0){ toast(ch+" no tiene nada para rendir"); return; }
+  $("#modalRoot").innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+      <div class="modal" style="max-width:460px">
+        <header><h3>✅ Rendición de ${esc(ch)}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+        <div class="body">
+          <p style="font-size:15px;line-height:1.6">Vas a registrar que <b>${esc(ch)}</b> entregó
+            <b style="color:var(--ok);font-size:19px">${money(debe)}</b> a la empresa.</p>
+          <div class="help" style="margin-top:12px">Su cuenta corriente queda en cero y estas ventas pasan al historial. Los cierres no se pueden editar después.</div>
+          <div class="field" style="margin-top:14px"><label>¿Quién recibe la plata?</label>
+            <input id="rendPor" value="${esc(nombreUsuario())}"></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+          <button class="btn btn-green" id="btnRendir" onclick="confirmarRendicion()">✅ Confirmar rendición</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* En modo demo solo avisan; conexion.js los reemplaza para guardar en la base. */
+function guardarCobrosChofer(){ toast("⚠️ Sin conexión a la base no se pueden guardar cobros"); }
+function confirmarRendicion(){ toast("⚠️ Sin conexión a la base no se pueden guardar rendiciones"); }
+
+/* ---------- Excel de la hoja de ruta ---------- */
+async function exportarRutaExcel(){
+  if(!puede('exportar')){ toast("No tenés permiso para exportar"); return; }
+  const ch = chofSel, filas = rutaDe(ch);
+  if(!filas.length){ toast("No hay entregas en la ruta de "+ch); return; }
+  toast("Generando Excel…");
+  try{ await cargarExcelJS(); }catch(e){ toast("⚠️ Necesitás conexión a internet para el Excel."); return; }
+  try{
+    const VERDE="FF3F6F5E", VERDE2="FF345C4E", GRISH="FFFAFCFB", LINEA="FFD8E0DD", ROJO="FFC0392B", OK="FF16A34A";
+    const thin={style:'thin',color:{argb:LINEA}}, bAll={top:thin,left:thin,bottom:thin,right:thin};
+    const wb=new ExcelJS.Workbook(); wb.creator="Aura Minipiscinas";
+    const ws=wb.addWorksheet("Hoja de ruta",{views:[{state:'frozen',ySplit:4}],
+      pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0}});
+
+    ws.mergeCells('A1:I1');
+    const t=ws.getCell('A1'); t.value="AURA MINIPISCINAS  ·  HOJA DE RUTA";
+    t.font={name:'Arial',bold:true,size:15,color:{argb:'FFFFFFFF'}};
+    t.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE2}};
+    t.alignment={vertical:'middle',indent:1}; ws.getRow(1).height=30;
+
+    ws.mergeCells('A2:I2');
+    const st=ws.getCell('A2');
+    st.value=`Chofer: ${ch.toUpperCase()}          Salida: ${fmtFechaCorta(hoyISO())}          ${filas.length} entrega${filas.length===1?'':'s'}`;
+    st.font={name:'Arial',bold:true,size:11,color:{argb:VERDE2}};
+    st.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFEEF4F1'}};
+    st.alignment={vertical:'middle',indent:1}; ws.getRow(2).height=22;
+
+    const heads=["Venta","Cliente","Piscina","Lleva también","Localidad / Domicilio","Teléfono","Total","Ya pagó","A COBRAR"];
+    const anchos=[9,26,24,30,34,17,14,13,15];
+    const hr=ws.getRow(4);
+    heads.forEach((h,i)=>{ const c=hr.getCell(i+1); c.value=h;
+      c.font={name:'Arial',bold:true,size:10,color:{argb:'FFFFFFFF'}};
+      c.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE}};
+      c.alignment={horizontal:'center',vertical:'middle',wrapText:true}; c.border=bAll; });
+    anchos.forEach((a,i)=>ws.getColumn(i+1).width=a); hr.height=26;
+
+    const MON='"$ "#,##0';
+    filas.forEach((v,idx)=>{
+      const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
+      const items=v.items||[];
+      const pileta=(items.find(i=>(i.categoria==="Minipiscinas")||/minipiscina|pileta/i.test(i.nombre||""))||{}).nombre||"—";
+      const extras=items.filter(i=>i.nombre!==pileta).map(i=>i.nombre).join(" + ")||"—";
+      const donde=(c.localidad||v.localidad||"")+(c.domicilio?" — "+c.domicilio:"");
+      const total=granTotal(v), cobrar=Number(v.saldo||0), pago=total-cobrar;
+      const r=ws.addRow([v.nro, v.cliente, pileta, extras, donde, c.tel||"", total, pago, null]);
+      const rn=r.number;
+      r.getCell(9).value={formula:`G${rn}-H${rn}`};
+      r.height=30;
+      for(let col=1;col<=9;col++){
+        const cell=r.getCell(col); cell.border=bAll;
+        cell.alignment={horizontal: col>=7?'right':(col===1||col===6?'center':'left'), vertical:'middle', wrapText:(col===4||col===5)};
+        cell.font={name:'Arial',size:10};
+        if(col>=7) cell.numFmt=MON;
+        if(idx%2===1 && col!==9) cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:GRISH}};
+      }
+      r.getCell(1).font={name:'Arial',bold:true,size:10,color:{argb:VERDE}};
+      r.getCell(2).font={name:'Arial',bold:true,size:10};
+      r.getCell(3).font={name:'Arial',bold:true,size:10};
+      r.getCell(4).font={name:'Arial',size:9.5,color:{argb:'FF6B7280'}};
+      r.getCell(9).font={name:'Arial',bold:true,size:11,color:{argb: cobrar>0?ROJO:OK}};
+    });
+
+    const rt=ws.addRow([]);
+    ws.mergeCells(`A${rt.number}:H${rt.number}`);
+    const lbl=rt.getCell(1); lbl.value=`TOTAL QUE TIENE QUE TRAER ${ch.toUpperCase()}`;
+    lbl.font={name:'Arial',bold:true,size:12,color:{argb:'FFFFFFFF'}};
+    lbl.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE2}};
+    lbl.alignment={horizontal:'right',vertical:'middle',indent:1};
+    const tc=rt.getCell(9); tc.value={formula:`SUM(I5:I${rt.number-1})`};
+    tc.font={name:'Arial',bold:true,size:13,color:{argb:'FFFFFFFF'}};
+    tc.fill={type:'pattern',pattern:'solid',fgColor:{argb:VERDE2}};
+    tc.numFmt=MON; tc.alignment={horizontal:'right',vertical:'middle'}; tc.border=bAll;
+    rt.height=30;
+
+    const f1=ws.addRow([]); ws.addRow([]);
+    const fr=ws.addRow(["","Recibí conforme (chofer):","","","Rindió en la empresa:"]);
+    fr.getCell(2).font={name:'Arial',bold:true,size:10};
+    fr.getCell(5).font={name:'Arial',bold:true,size:10};
+    const lr=ws.addRow([]); lr.height=24;
+    [2,3,5,6].forEach(c=>lr.getCell(c).border={bottom:{style:'thin',color:{argb:'FF333333'}}});
+    ws.addRow([]);
+    const nr=ws.addRow(["","Las filas en verde ya están pagas: NO cobrar. Las de rojo son las que hay que cobrar."]);
+    nr.getCell(2).font={name:'Arial',size:9.5,italic:true,color:{argb:'FF6B7280'}};
+
+    const buf=await wb.xlsx.writeBuffer();
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    a.download=`Hoja_de_ruta_${ch}_${hoyISO()}.xlsx`; a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+    toast(`✅ Hoja de ruta de ${ch} descargada`);
+  }catch(ex){ toast("⚠️ Error generando el Excel: "+(ex.message||ex)); }
 }
 
 /* ====== CLIENTES ====== */

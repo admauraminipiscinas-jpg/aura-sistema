@@ -70,9 +70,9 @@ async function cargarTodo(){
   CLIENTES.length=0; (c.data||[]).forEach(r=>CLIENTES.push({id:r.id,nombre:r.nombre,apellido:r.apellido,dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,domicilio:r.domicilio||'',saldo:Number(r.saldo||0),activo:r.activo!==false}));
   ESTADOS.length=0; (e.data||[]).forEach(r=>ESTADOS.push({nombre:r.nombre,color:r.color||'gris'}));
   CATEGORIAS.length=0; (cat.data||[]).forEach(r=>CATEGORIAS.push(r.nombre));
-  const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||''});});
+  const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({id:r.id,monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||'',chofer:r.chofer||null,rendido:r.rendido===true,rendido_fecha:r.rendido_fecha||null,rendido_por:r.rendido_por||''});});
   const byV={}; (vi.data||[]).forEach(r=>{(byV[r.venta_id]=byV[r.venta_id]||[]).push({nombre:r.nombre,precio:Number(r.precio),cant:r.cantidad,categoria:r.categoria});});
-  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
+  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',chofer:r.chofer||null,items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
   HISTORIAL.length=0; historialDesdeVentas(VENTAS).forEach(l=>HISTORIAL.push(l));
   USUARIOS.length=0; (per.data||[]).forEach(r=>USUARIOS.push({id:r.id,nombre:r.nombre||'',ap:r.apellido||'',user:r.usuario||'',rol:r.rol,activo:r.activo!==false,pass:'••••'}));
   AUDITORIA.length=0; audData.forEach(r=>AUDITORIA.push({usuario:r.usuario||'',rol:r.rol||'',accion:r.accion||'',entidad:r.entidad||'',entidad_id:r.entidad_id||'',detalle:r.detalle||'',creado:r.creado}));
@@ -415,7 +415,7 @@ const _toggleCliente=window.toggleCliente;
 window.toggleCliente=function(id){ _toggleCliente(id); const c=CLIENTES.find(x=>x.id===id); if(c) guardarCampo('clientes',id,{activo:c.activo},"el cliente"); };
 
 const _guardarEstadoVenta=window.guardarEstadoVenta;
-window.guardarEstadoVenta=function(nro){ _guardarEstadoVenta(nro); const v=VENTAS.find(x=>x.nro===nro); if(v) guardarCampo('ventas',nro,{estado:v.estado},"el estado de la venta #"+nro); };
+window.guardarEstadoVenta=function(nro){ _guardarEstadoVenta(nro); const v=VENTAS.find(x=>x.nro===nro); if(v) guardarCampo('ventas',nro,{estado:v.estado},"el estado de la venta #"+nro).then(ok=>{ if(ok){ sincronizarChofer(nro); respaldarEnSheet(nro); } }); };
 
 const _confirmarCancelarVenta=window.confirmarCancelarVenta;
 window.confirmarCancelarVenta=function(nro){
@@ -508,6 +508,7 @@ window.cambiarEstadoInline = function(nro, val){
   if(v && v.estado===val){
     guardarCampo('ventas',nro,{estado:val},"el estado de la venta #"+nro).then(ok=>{
       if(!ok && previo!=null){ v.estado=previo; renderTablaVentas(); }
+      else { sincronizarChofer(nro).then(okCh=>{ if(!okCh && previo!=null){ v.estado=previo; guardarCampo('ventas',nro,{estado:previo},"el estado de la venta #"+nro); renderTablaVentas(); } }); respaldarEnSheet(nro); }
     });
   }
 };
@@ -598,3 +599,110 @@ setInterval(function(){
   if(!app || app.style.display === "none") return;   // no hay nadie adentro
   if(sesionVencida()) cerrarPorInactividad();
 }, 60000);
+
+/* ====== CHOFERES: asignación, cobros y rendición ==========================
+   El chofer se guarda en un campo propio (ventas.chofer), NO en el estado.
+   Se completa solo a partir del estado, con estas reglas:
+     "En camino Omar"       -> chofer = Omar
+     "Procesando pedido"    -> chofer = vacío (todavía no salió)
+     "Entregado al cliente" -> se MANTIENE el que tenía
+   La última es la importante: al entregar, el chofer recién ahí tiene la plata
+   en la mano, así que la venta tiene que seguir en su cuenta corriente. */
+function choferSegunEstado(estado, choferActual){
+  const e = String(estado||"").toLowerCase().trim();
+  const m = e.match(/^en camino\s+(.+)$/);
+  if(m) return m[1].trim().replace(/^./,c=>c.toUpperCase());
+  if(e.includes("procesando") || e.includes("presupuesto")) return null;
+  return choferActual || null;   // entregado / post venta: no se toca
+}
+
+/* Guarda el chofer que corresponde al estado nuevo. Devuelve false si había
+   plata cobrada sin rendir y por eso NO conviene sacarle la venta al chofer. */
+async function sincronizarChofer(nro){
+  const v = VENTAS.find(x=>x.nro===nro); if(!v) return true;
+  const nuevo = choferSegunEstado(v.estado, v.chofer);
+  if(nuevo === (v.chofer||null)) return true;
+  /* Resguardo: si el chofer ya cobró plata de esta venta y no la rindió, no
+     lo dejamos desaparecer en silencio; eso es plata real que alguien tiene. */
+  const cobradoSinRendir = (v.pagos||[]).some(p=>p.chofer && p.chofer===v.chofer && !p.rendido);
+  if(cobradoSinRendir && nuevo !== v.chofer){
+    toast(`⚠️ ${v.chofer} ya cobró plata de la venta #${nro} y no la rindió. Rendila primero.`);
+    return false;
+  }
+  const r = await SB.from('ventas').update({chofer:nuevo}).eq('id',nro).select('id');
+  if(r.error || !r.data || !r.data.length){ toast("⚠️ No se pudo asignar el chofer de la venta #"+nro); return false; }
+  v.chofer = nuevo;
+  return true;
+}
+
+/* Registrar lo que el chofer cobró de cada cliente. Cada cobro entra como un
+   pago normal de la venta (así el saldo del cliente baja solo) pero marcado
+   con el chofer y sin rendir: eso es lo que arma su cuenta corriente. */
+window.guardarCobrosChofer = function(){
+  return unSoloGuardado('cobrosChofer', '#btnGuardarCobrosChofer', async function(){
+    const ch = chofSel;
+    const aCargar = cobrosChofer.filter(c=>Number(c.cobro||0) > 0);
+    if(!aCargar.length){ toast("⚠️ No cargaste ningún cobro"); return; }
+    const hoy = hoyISO();
+    try{
+      for(const c of aCargar){
+        const v = VENTAS.find(x=>x.nro===c.nro); if(!v) continue;
+        const monto = Math.min(Number(c.cobro||0), Number(v.saldo||0));
+        if(monto <= 0) continue;
+        const ins = await SB.from('pagos').insert({
+          venta_id:c.nro, monto, metodo:'Efectivo (chofer)', fecha:hoy,
+          usuario:nombreUsuario(), chofer:ch, rendido:false
+        }).select('id').single();
+        if(ins.error) throw ins.error;
+        const nuevoSaldo = Math.max(0, Number(v.saldo||0) - monto);
+        const up = await SB.from('ventas').update({saldo:nuevoSaldo}).eq('id',c.nro).select('id');
+        if(up.error) throw up.error;
+        if(!up.data || !up.data.length) throw new Error("no tenés permiso para actualizar la venta #"+c.nro);
+        v.saldo = nuevoSaldo;
+        v.pagos = v.pagos || [];
+        v.pagos.push({id:ins.data.id, monto, metodo:'Efectivo (chofer)', fecha:hoy,
+                      usuario:nombreUsuario(), chofer:ch, rendido:false, rendido_fecha:null, rendido_por:''});
+        respaldarEnSheet(c.nro);
+      }
+      const tot = aCargar.reduce((a,c)=>a+Number(c.cobro||0),0);
+      auditar("Cobros de chofer","chofer",ch,`${aCargar.length} venta(s) · ${money(tot)}`);
+      cerrarModal(); viewChoferes();
+      toast(`✅ Cobros de ${ch} registrados · ${money(tot)}`);
+    }catch(ex){
+      toast("⚠️ No se pudieron guardar los cobros: "+(ex.message||ex));
+      try{ await cargarTodo(); viewChoferes(); }catch(_){}
+    }
+  });
+};
+
+/* Rendición: el chofer entregó la plata. Marca todos sus pagos pendientes
+   como rendidos; a partir de ahí salen de la cuenta corriente y pasan al
+   historial. Los cierres no se editan. */
+window.confirmarRendicion = function(){
+  return unSoloGuardado('rendicion', '#btnRendir', async function(){
+    const ch = chofSel;
+    const pend = pendientesDe(ch);
+    if(!pend.length){ toast("No hay nada para rendir"); return; }
+    const quien = ($("#rendPor") && $("#rendPor").value.trim()) || nombreUsuario();
+    const ahora = new Date().toISOString();
+    const ids = pend.map(x=>x.pago.id).filter(Boolean);
+    if(ids.length !== pend.length){
+      toast("⚠️ Hay cobros sin identificar. Volvé a entrar al sistema y probá de nuevo."); return;
+    }
+    try{
+      const r = await SB.from('pagos')
+        .update({rendido:true, rendido_fecha:ahora, rendido_por:quien})
+        .in('id', ids).select('id');
+      if(r.error) throw r.error;
+      if(!r.data || r.data.length !== ids.length) throw new Error("no tenés permiso para cerrar la rendición");
+      const tot = pend.reduce((a,x)=>a+Number(x.pago.monto||0),0);
+      pend.forEach(({pago})=>{ pago.rendido=true; pago.rendido_fecha=ahora; pago.rendido_por=quien; });
+      auditar("Rendición de chofer","chofer",ch,`${money(tot)} · ${pend.length} cobro(s) · recibió ${quien}`);
+      cerrarModal(); viewChoferes();
+      toast(`✅ ${ch} rindió ${money(tot)} · cuenta en cero`);
+    }catch(ex){
+      toast("⚠️ No se pudo cerrar la rendición: "+(ex.message||ex));
+      try{ await cargarTodo(); viewChoferes(); }catch(_){}
+    }
+  });
+};
