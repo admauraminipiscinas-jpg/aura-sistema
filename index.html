@@ -1039,6 +1039,7 @@ function viewVentas(){
               ${puede('exportar')?`<button role="menuitem" onclick="cerrarVentasMenu();exportarExcel(false)" title="Exportar a Excel todas las ventas del rango y filtros actuales">📊 Excel (filtradas)</button>`:''}
               ${puede('exportar')?`<button role="menuitem" id="btnExpSel" onclick="cerrarVentasMenu();exportarSeleccionExcel()" title="Exportar solo las ventas tildadas">✅ Exportar selección (<span id="selCount">0</span>)</button>`:''}
               ${puede('cambiar_estado')?`<button role="menuitem" onclick="cerrarVentasMenu();abrirGestionEstados()">⚙️ Estados</button>`:''}
+              ${esMaestro()?`<button role="menuitem" onclick="cerrarVentasMenu();probarSheet()" title="Comprueba que las ventas se estén copiando a la planilla de Google">🔗 Probar planilla de respaldo</button>`:''}
             </div>
           </div>`:''}
           ${puede('ver_vender')?`<button class="btn btn-blue" onclick="nav('vender')">＋ Nueva Venta</button>`:''}
@@ -1266,6 +1267,19 @@ function abrirOrden(nro){
   const cobrado=granTotal(v)-v.saldo;
   const ec=estColor(v.estado);
 
+  /* Texto que se lleva el botón "Copiar datos": los cinco datos que se usan para
+     coordinar una entrega, uno por renglón y listos para pegar en WhatsApp. */
+  const _pilCopia = items.filter(i=>Number(i.precio)!==0).map(i=>i.nombre);
+  const _bonCopia = items.filter(i=>Number(i.precio)===0).map(i=>i.nombre);
+  const _dondeCopia = (c.localidad||v.localidad||'') + (c.provincia?` (${c.provincia})`:'');
+  const textoCopia = [
+    `Cliente: ${v.cliente}`,
+    `Tel: ${c.tel||'—'}`,
+    `Localidad: ${_dondeCopia||'—'}`,
+    `Compró: ${[..._pilCopia, ..._bonCopia].join(' + ')||'—'}`,
+    `Saldo pendiente: ${money(v.saldo)}`
+  ].join('\n');
+
   /* Van TODOS los productos en la misma tabla y con el mismo formato, también los
      bonificados (cantidad, precio y subtotal en $ 0). Así se puede leer el detalle
      completo de la venta de un saque. Van primero los que se cobran y después los
@@ -1426,6 +1440,7 @@ function abrirOrden(nro){
   <div class="page">
 
     <div class="barra">
+      <button class="btn" id="btnCopiar" onclick="copiarDatos()">📋 Copiar datos</button>
       <button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
       <button class="btn gris" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>
       ${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn cobro" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}
@@ -1483,6 +1498,52 @@ function abrirOrden(nro){
     ${v.nota?`<section class="card"><h2>📝 Notas / Observaciones</h2><div class="nota">${esc(v.nota)}</div></section>`:''}
 
   </div>
+  <script>
+    /* El texto va serializado para que no lo rompan comillas, acentos ni saltos
+       de línea que vengan del nombre del cliente o de un producto. */
+    var DATOS_COPIA = ${JSON.stringify(textoCopia).replace(/</g,'\\u003c')};
+    function copiarDatos(){
+      var b = document.getElementById('btnCopiar');
+      function listo(){
+        b.textContent = '✅ ¡Copiado!'; b.style.background = '#2f8f6a';
+        setTimeout(function(){ b.textContent='📋 Copiar datos'; b.style.background=''; }, 1800);
+      }
+      /* Si el navegador no deja usar el portapapeles (pasa en algunas ventanas
+         emergentes), copiamos con el método viejo; y si tampoco, al menos le
+         mostramos el texto para que lo pueda seleccionar a mano. */
+      function alternativa(){
+        var t = document.createElement('textarea');
+        t.value = DATOS_COPIA;
+        t.style.position='fixed'; t.style.top='-1000px';
+        document.body.appendChild(t); t.focus(); t.select();
+        var ok=false; try{ ok = document.execCommand('copy'); }catch(e){}
+        document.body.removeChild(t);
+        if(ok){ listo(); return; }
+        aMano();
+      }
+      /* Último recurso: mostramos el texto ya seleccionado en la pantalla para
+         que se copie con Ctrl+C. Así el botón nunca queda sin hacer nada. */
+      function aMano(){
+        var caja = document.getElementById('cajaCopia');
+        if(!caja){
+          caja = document.createElement('div');
+          caja.id = 'cajaCopia';
+          caja.style.cssText = 'background:#fffbeb;border:1px solid #f0d27a;border-radius:12px;padding:14px 16px;margin-bottom:16px';
+          caja.innerHTML = '<div style="font-size:13px;font-weight:700;color:#6b5518;margin-bottom:8px">'
+            + 'Tu navegador no dejó copiar solo. El texto ya está seleccionado: apretá Ctrl+C (o Cmd+C en Mac).</div>'
+            + '<textarea id="taCopia" readonly style="width:100%;height:118px;border:1px solid #e6d9a8;border-radius:8px;'
+            + 'padding:10px;font-family:inherit;font-size:13.5px;line-height:1.6;resize:vertical;background:#fff"></textarea>';
+          var barra = document.querySelector('.barra');
+          barra.parentNode.insertBefore(caja, barra.nextSibling);
+        }
+        var ta = document.getElementById('taCopia');
+        ta.value = DATOS_COPIA; ta.focus(); ta.select();
+      }
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(DATOS_COPIA).then(listo).catch(alternativa);
+      } else { alternativa(); }
+    }
+  <\/script>
   </body></html>`;
   const w=window.open("","_blank");
   if(!w){ toast("⚠️ Permití las ventanas emergentes para ver la orden"); return; }
