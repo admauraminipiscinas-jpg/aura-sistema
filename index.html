@@ -301,6 +301,21 @@ const PROVINCIAS = [
 /* ====== HELPERS ====== */
 const $ = s => document.querySelector(s);
 const money = n => "$ " + (n||0).toLocaleString("es-AR");
+/* ====== BUSCADOR "POR PALABRAS SUELTAS" ======
+   Antes se buscaba la frase entera tal cual, así que escribir "fortes maria" no
+   encontraba a "María Emilia Fortes Alvarez" (las palabras no están pegadas) y
+   "maria" sin tilde tampoco encontraba a "María".
+   Ahora: se sacan los acentos y se exige que TODAS las palabras escritas
+   aparezcan en algún lado del dato, sin importar el orden ni cuál venga primero. */
+function normalizarTexto(t){
+  return String(t==null?'':t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+function coincideBusqueda(texto, consulta){
+  const q = normalizarTexto(consulta).replace(/^#/,'').trim();
+  if(!q) return true;
+  const campo = normalizarTexto(texto);
+  return q.split(/\s+/).every(palabra => campo.includes(palabra));
+}
 /* Escape de HTML. TODO texto que venga de la base o de un formulario (nombres,
    notas, localidades, métodos de pago…) tiene que pasar por acá antes de entrar
    en un innerHTML o en un atributo. Sin esto, un cliente llamado
@@ -706,9 +721,10 @@ function abrirModalCliente(modo, id){
             <div class="field"><label>Apellido <span class="req">*</span></label><input id="cApellido" value="${esc(c.apellido)}" placeholder="Apellido"></div>
           </div>
           <div class="row" style="margin-top:12px">
-            <div class="field"><label>DNI <span class="req">*</span></label><input id="cDni" inputmode="numeric" value="${esc(c.dni)}" placeholder="Sin puntos"></div>
+            <div class="field"><label>DNI <span class="req">*</span></label><input id="cDni" inputmode="numeric" value="${esc(c.dni)}" placeholder="Sin puntos" oninput="chequearDniExistente()"></div>
             <div class="field"><label>Teléfono <span class="req">*</span></label><input id="cTel" value="${esc(c.tel)}" placeholder="Cód. área + número"></div>
           </div>
+          <div id="cliExiste"></div>
           <div class="row" style="margin-top:12px">
             <div class="field"><label>Provincia <span class="req">*</span></label>
               <select id="cProvincia">
@@ -736,6 +752,39 @@ function abrirModalCliente(modo, id){
       </div>
     </div>`;
   setTimeout(()=>{const n=$("#cNombre"); if(n) n.focus();},50);
+}
+
+/* Si el DNI que están tipeando ya es de un cliente cargado, avisamos en el
+   momento y ofrecemos usar esa ficha. Sin esto quedaba un callejón sin salida:
+   no se podía crear (el DNI está repetido) ni elegir el que ya existía, porque
+   en Vender no hay buscador de clientes. Pasa siempre que se carga un cliente,
+   se cancela la venta y al rato se la quiere volver a hacer. */
+function chequearDniExistente(){
+  const cont = $("#cliExiste"); if(!cont) return;
+  const soloNum = t => String(t==null?'':t).replace(/\D/g,'');
+  const dni = soloNum($("#cDni") && $("#cDni").value);
+  const editId = (modalModo==="venta" && clienteActual) ? clienteActual.id
+               : (typeof clienteEditId!=="undefined" && clienteEditId!=null) ? clienteEditId : null;
+  const ya = dni.length>=7 ? CLIENTES.find(x=>x.id!==editId && soloNum(x.dni)===dni) : null;
+  if(!ya){ cont.innerHTML=""; return; }
+  cont.innerHTML = `<div class="help" style="background:#fff4d6;border-color:#f0d27a;color:#6b5518;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+      <span style="flex:1;min-width:190px">👤 Ese DNI ya es de <b>${esc(ya.nombre)} ${esc(ya.apellido||'')}</b>${ya.localidad?` · ${esc(ya.localidad)}`:''}</span>
+      <button class="btn btn-green btn-sm" onclick="usarClienteExistente(${ya.id})">Usar este cliente</button>
+    </div>`;
+}
+
+/* Carga la ficha que ya existe en vez de crear una nueva. */
+function usarClienteExistente(id){
+  const c = CLIENTES.find(x=>x.id===id);
+  if(!c){ toast("No encontré ese cliente"); return; }
+  if(modalModo==="venta"){
+    clienteActual = {id:c.id, nombre:c.nombre, apellido:c.apellido||'', dni:c.dni, tel:c.tel,
+                     mail:c.mail, provincia:c.provincia, localidad:c.localidad, domicilio:c.domicilio||''};
+    cerrarModal(); renderClienteBox();
+    toast(`✅ Cliente ${c.nombre} ${c.apellido||''} cargado`.replace(/\s+/g,' '));
+  } else {
+    cerrarModal(); abrirModalCliente('clientes', id);
+  }
 }
 
 function cerrarModal(){ $("#modalRoot").innerHTML = ""; }
@@ -1091,8 +1140,8 @@ function ventasFiltradas(){
     if(ventasProvincia && (v.provincia||"")!==ventasProvincia) return false;
     if(q){
       const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
-      const txt=("#"+v.nro+" "+(v.cliente||"")+" "+(v.vendedor||"")+" "+(v.localidad||"")+" "+(v.provincia||"")+" "+(v.nota||"")+" "+(c.tel||"")+" "+(c.mail||"")+" "+(c.dni||"")).toLowerCase();
-      if(!txt.includes(q.replace(/^#/,''))) return false;
+      const txt="#"+v.nro+" "+(v.cliente||"")+" "+(v.vendedor||"")+" "+(v.localidad||"")+" "+(v.provincia||"")+" "+(v.nota||"")+" "+(c.tel||"")+" "+(c.mail||"")+" "+(c.dni||"")+" "+(c.domicilio||"");
+      if(!coincideBusqueda(txt, q)) return false;
     }
     return true;
   });
@@ -2545,7 +2594,7 @@ function cliFiltrados(){
     if(cliProv && (c.provincia||'')!==cliProv) return false;
     if(cliEstado==='activo' && c.activo===false) return false;
     if(cliEstado==='inactivo' && c.activo!==false) return false;
-    if(q && !(((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')+' '+(c.provincia||'')).toLowerCase().includes(q))) return false;
+    if(q && !coincideBusqueda((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')+' '+(c.provincia||'')+' '+(c.domicilio||''), q)) return false;
     return true;
   });
 }

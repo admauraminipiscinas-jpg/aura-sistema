@@ -280,7 +280,16 @@ async function respaldarEnSheet(nro){
       body: JSON.stringify({nro})
     });
     const j = await r.json();
-    if(j.sinConfigurar) return;                       // todavía no se conectó la planilla
+    if(j.sinConfigurar){
+      /* Faltan las variables en Vercel. Avisamos una vez por sesión: si alguien
+         ya creó la planilla y configuró todo, tiene que enterarse de que no está
+         llegando; si nunca la usó, el cartel aparece una sola vez y listo. */
+      if(!window.__avisoSheet){
+        window.__avisoSheet = true;
+        toast("⚠️ La planilla de respaldo no está conectada: faltan SHEET_WEBHOOK_URL y SHEET_TOKEN en Vercel.");
+      }
+      return;
+    }
     if(!j.ok){
       console.warn('Copia en la planilla:', j.error||'no se pudo guardar', j.respuesta||'');
       /* Avisamos en pantalla una sola vez por sesión: si la copia de seguridad
@@ -388,7 +397,11 @@ async function _guardarClienteReal(){
     const repetido = CLIENTES.find(x => x.id!==editId && soloNumeros(x.dni)===dniNuevo);
     if(repetido){
       campos.dni.classList.add("err"); campos.dni.focus();
-      toast(`⚠️ El DNI ${datos.dni} ya está cargado en el cliente ${repetido.nombre} ${repetido.apellido||''}`.trim());
+      /* Mostramos el cartel con el botón "Usar este cliente" para que no quede
+         trabado: el DNI no se puede repetir, pero la ficha que ya existe se
+         puede reutilizar para esta venta. */
+      if(typeof chequearDniExistente==="function") chequearDniExistente();
+      toast(`⚠️ El DNI ${datos.dni} ya es de ${repetido.nombre} ${repetido.apellido||''}. Usá el botón "Usar este cliente".`.replace(/\s+/g,' '));
       return;
     }
   }
