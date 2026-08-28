@@ -1842,7 +1842,9 @@ function renderCobros(nro){
        </div>`
     : (cobroEditIdx===null ? `<div class="help" style="margin-top:8px">La venta queda <b>saldada</b> ($0). Si te equivocaste, editá (✏️) o quitá (🗑️) un cobro.</div>` : '');
 
-  const mailRow = `<div class="switch" style="margin-top:12px"><input type="checkbox" id="cobMail" ${mail?'checked':''} ${mail?'':'disabled'} style="width:auto"><label for="cobMail" style="text-transform:none;font-weight:600;color:#374151">Enviar comprobante (remito) actualizado por mail al cliente${mail?'':' — este cliente no tiene email'}</label></div>`;
+  /* Este tilde arranca APAGADO a propósito: cobrar no tiene por qué mandarle un
+     mail al cliente. Si se quiere avisar, se tilda antes de confirmar. */
+  const mailRow = `<div class="switch" style="margin-top:12px"><input type="checkbox" id="cobMail" ${mail?'':'disabled'} style="width:auto"><label for="cobMail" style="text-transform:none;font-weight:600;color:#374151">Enviar comprobante (remito) actualizado por mail al cliente${mail?' <span style="font-weight:600;color:#6b7280">(opcional)</span>':' — este cliente no tiene email'}</label></div>`;
 
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
