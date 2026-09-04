@@ -117,6 +117,8 @@
   .money-input{position:relative;display:flex;align-items:center}
   .money-input>span{position:absolute;left:9px;font-weight:800;color:#6b7280;pointer-events:none}
   .money-input>input{width:100%;padding-left:20px}
+  .money-input.usd>span{font-size:13px}
+  .money-input.usd>input{padding-left:42px}
   .no-spin{-moz-appearance:textfield;appearance:textfield}
   .no-spin::-webkit-outer-spin-button,.no-spin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .hint{background:#eaf3ef;border:1px solid #cfe6dc;color:#2c5446;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:16px}
@@ -307,6 +309,9 @@ const money = n => "$ " + (n||0).toLocaleString("es-AR");
    "maria" sin tilde tampoco encontraba a "María".
    Ahora: se sacan los acentos y se exige que TODAS las palabras escritas
    aparezcan en algún lado del dato, sin importar el orden ni cuál venga primero. */
+/* Una venta heredada del sistema anterior: se opera (entrega y cobro) pero no
+   entra en ningún número del sistema nuevo. */
+function esVentaVieja(v){ return (v && v.origen) === 'viejo'; }
 function normalizarTexto(t){
   return String(t==null?'':t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
@@ -351,6 +356,7 @@ const PERMISOS_LISTA = [
   {k:"ver_auditoria",      t:"Acceder a Auditoría / Historial"},
   {k:"ver_ranking",        t:"Acceder a la sección Equipo de ventas"},
   {k:"ver_choferes",       t:"Acceder a Choferes (reparto y rendiciones)"},
+  {k:"ver_sistema_viejo",  t:"Acceder a Sistema viejo (ventas heredadas)"},
   {k:"editar_venta",       t:"Editar ventas (productos, notas, pagos, IVA)"},
   {k:"cancelar_venta",     t:"Cancelar ventas"},
   {k:"cambiar_estado",     t:"Cambiar el estado de las ventas"},
@@ -362,9 +368,9 @@ const PERMISOS_LISTA = [
 ];
 /* Valores por defecto (se sobreescriben con lo guardado en la base) */
 const PERMISOS_DEFAULT = {
-  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:1,ver_clientes:1,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
-  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_clientes:0,ver_productos:1,ver_stock:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
-  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_clientes:0,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
+  "Administrador":{ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:1,ver_sistema_viejo:1,ver_clientes:1,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:1,ver_auditoria:1,editar_venta:1,cancelar_venta:1,cambiar_estado:1,gestionar_productos:1,editar_precio:0,gestionar_clientes:1,gestionar_usuarios:0,exportar:1},
+  "Vendedor":     {ver_vender:1,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_sistema_viejo:0,ver_clientes:0,ver_productos:1,ver_stock:0,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:0,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:1},
+  "Producción":   {ver_vender:0,ver_ventas:1,ver_ranking:1,ver_choferes:0,ver_sistema_viejo:0,ver_clientes:0,ver_productos:1,ver_stock:1,ver_usuarios:0,ver_reportes:0,ver_auditoria:0,editar_venta:0,cancelar_venta:0,cambiar_estado:1,gestionar_productos:0,editar_precio:0,gestionar_clientes:0,gestionar_usuarios:0,exportar:0},
 };
 let PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
 let permisosDraft = null; // copia de trabajo al editar el panel
@@ -382,7 +388,7 @@ function esMaestro(){ return USUARIO_ACTUAL.rol==="Maestro"; }
 /* Motor de permisos: el Maestro siempre puede todo; el resto según la matriz configurable. */
 function puede(k){ if(esMaestro()) return true; const r=PERMISOS[USUARIO_ACTUAL.rol]; return !!(r && r[k]); }
 function puedeUsuarios(){ return puede("gestionar_usuarios"); }  // compat: gestionar usuarios/roles
-const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",ranking:"ver_ranking",choferes:"ver_choferes",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
+const TAB_PERM = {vender:"ver_vender",ventas:"ver_ventas",ranking:"ver_ranking",choferes:"ver_choferes",viejo:"ver_sistema_viejo",clientes:"ver_clientes",productos:"ver_productos",usuarios:"ver_usuarios",reportes:"ver_reportes",auditoria:"ver_auditoria"};
 function tabsPermitidas(){ return Object.keys(TAB_PERM).filter(t=>puede(TAB_PERM[t])); }
 
 const TABS = [
@@ -395,6 +401,7 @@ const TABS = [
   {id:"usuarios", ic:"🔐", txt:"Usuarios"},
   {id:"auditoria",ic:"📜", txt:"Auditoría"},
   {id:"reportes", ic:"📊", txt:"Reportes"},
+  {id:"viejo",    ic:"📦", txt:"Sistema viejo"},
 ];
 let vistaActual = "vender";
 function renderSidebar(){
@@ -488,7 +495,7 @@ function nav(v){
   vistaActual = v;
   renderSidebar();
   $("#side").classList.remove("open");
-  ({vender:viewVender,ventas:viewVentas,ranking:viewRanking,choferes:viewChoferes,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
+  ({vender:viewVender,ventas:viewVentas,ranking:viewRanking,choferes:viewChoferes,viejo:viewSistemaViejo,clientes:viewClientes,productos:viewProductos,usuarios:viewUsuarios,auditoria:viewAuditoria,reportes:viewReportes}[v])();
 }
 
 /* ====== VENDER (simplificado) ====== */
@@ -989,7 +996,7 @@ function viewRanking(){
   const now=new Date(), cy=now.getFullYear(), cm=now.getMonth();
   const acc={};
   VENTAS.forEach(v=>{
-    if(v.cancelada) return;
+    if(v.cancelada || esVentaVieja(v)) return;   // las heredadas no suman al ranking
     const vend=(v.vendedor||"").trim(); if(!vend) return;
     const f=(v.fecha||""); const y=+f.slice(0,4), m=+f.slice(5,7)-1;
     if(y!==cy) return;
@@ -1133,6 +1140,7 @@ function setVentasSort(key){
 function ventasFiltradas(){
   const q=(ventasQuery||"").trim().toLowerCase();
   let rows=VENTAS.filter(v=>{
+    if(esVentaVieja(v)) return false;            // viven en su propia sección
     if(ventasDesde && v.fecha<ventasDesde) return false;
     if(ventasHasta && v.fecha>ventasHasta) return false;
     if(ventasEstado && v.estado!==ventasEstado) return false;
@@ -1169,7 +1177,7 @@ function exportarExcel(soloSeleccion){
     const prods=items.map(i=>i.nombre).join(" | ");
     const cants=items.map(i=>i.cant).join(" | ");
     const precios=items.map(i=>montoAR(i.precio)).join(" | ");
-    const pagos=(v.pagos||[]).map(p=>`${montoAR(p.monto)}${p.metodo?` (${p.metodo}`:''}${p.fecha?`${p.metodo?', ':' ('}${fmtFechaCorta(p.fecha)})`:(p.metodo?')':'')}`).join(" | ");
+    const pagos=(v.pagos||[]).map(p=>`${montoAR(p.monto)}${p.metodo?` (${textoMetodoPago(p)}`:''}${p.fecha?`${p.metodo?', ':' ('}${fmtFechaCorta(p.fecha)})`:(p.metodo?')':'')}`).join(" | ");
     return {"Nro.":v.nro,"Fecha":fmtFechaCorta(v.fecha),"Fecha Prometida":fmtFechaCorta(v.entrega),"Cliente":v.cliente,"Provincia":v.provincia||"","Localidad":v.localidad,"Teléfono":c.tel||"","Email":c.mail||"","Productos":prods,"Cantidades":cants,"Precios":precios,"¿Factura?":v.factura?"Sí":"No","Total sin IVA":Number(v.total||0),"IVA":Number(v.iva||0),"Subtotal (c/IVA)":granTotal(v),"Cobrado":granTotal(v)-Number(v.saldo||0),"Saldo":Number(v.saldo||0),"Pagos registrados":pagos,"Estado":v.cancelada?"Cancelada":v.estado,"Observaciones":v.nota||"","Vendedor":v.vendedor};
   });
   const nombre=(soloSeleccion?`Ventas_seleccion_`:`Ventas_`)+`${ventasDesde||'inicio'}_a_${ventasHasta||'hoy'}`;
@@ -1534,7 +1542,7 @@ function abrirOrden(nro){
         <div class="lin"><span>IVA (21%)</span><span class="n">${money(v.iva||0)}</span></div>`:''}
         <div class="lin total"><span>Total del pedido</span><span class="n">${money(granTotal(v))}</span></div>
         <div class="lin ok"><span>Pagos realizados</span><span class="n">${money(cobrado)}</span></div>
-        ${(v.pagos&&v.pagos.length)?`<div class="pagos-det">${v.pagos.map(p=>`<div>${p.fecha?fmtFechaCorta(p.fecha)+' · ':''}${esc(p.metodo||'Pago')} — <b>${money(p.monto)}</b></div>`).join("")}</div>`:''}
+        ${(v.pagos&&v.pagos.length)?`<div class="pagos-det">${v.pagos.map(p=>`<div>${p.fecha?fmtFechaCorta(p.fecha)+' · ':''}${esc(p.metodo?textoMetodoPago(p):'Pago')} — <b>${money(p.monto)}</b></div>`).join("")}</div>`:''}
         <div class="lin saldo ${v.saldo<=0?'pago':''}"><span>Saldo pendiente</span><span class="n">${money(v.saldo)}${v.saldo<=0?' ✓':''}</span></div>
       </section>
 
@@ -1838,6 +1846,24 @@ function cambiarEstadoInline(nro, val){
 /* ====== COBROS (misma estructura que Editar venta: agregar a la lista + Confirmar) ====== */
 let cobroWork = [];       // copia de trabajo de los pagos de la venta abierta
 let cobroEditIdx = null;  // índice del pago que se edita en línea
+let cobroNota = "";       // el cuadrito de notas, mientras el modal está abierto
+
+/* Los pagos SIEMPRE se guardan en pesos (`monto`), porque en pesos están el
+   total, el saldo y todos los reportes. Cuando el cobro es en dólares, además
+   se anota cuántos dólares entraron (`usd`) y a cuánto se tomó el dólar
+   (`cotiz`): el peso se calcula multiplicando esos dos. */
+const METODOS_COBRO = ['Efectivo','Transferencia','Tarjeta','Cuenta corriente','Dólares'];
+const esPagoUSD = m => m === 'Dólares';
+const usdAR = n => (n||0).toLocaleString('es-AR',{maximumFractionDigits:2});
+
+/* Cómo se muestra un cobro ya guardado. Un cobro en dólares se lee entero:
+   "Dólares · US$ 2.000 a $ 1.350" — sin la cotización, meses después nadie
+   puede reconstruir de dónde salió el importe en pesos. */
+function textoMetodoPago(p){
+  if(esPagoUSD(p.metodo) && Number(p.usd)>0 && Number(p.cotiz)>0)
+    return `Dólares · US$ ${usdAR(p.usd)} a ${money(p.cotiz)}`;
+  return p.metodo || '—';
+}
 
 function cobrarSaldo(nro){
   if(!(esMaestro()||esAdmin())){ toast("Solo Administrador o Maestro pueden gestionar cobros"); return; }
@@ -1846,20 +1872,28 @@ function cobrarSaldo(nro){
   const total=granTotal(v);
   const cobradoPrevio=Math.max(0, total-Number(v.saldo||0));
   cobroWork=(v.pagos&&v.pagos.length)
-    ? v.pagos.map(p=>({monto:Number(p.monto||0), metodo:p.metodo||'Efectivo', fecha:p.fecha||v.fecha, usuario:p.usuario||v.vendedor||''}))
-    : (cobradoPrevio>0 ? [{monto:cobradoPrevio, metodo:'Inicial', fecha:v.fecha, usuario:v.vendedor||''}] : []);
+    ? v.pagos.map(p=>({monto:Number(p.monto||0), metodo:p.metodo||'Efectivo', fecha:p.fecha||v.fecha, usuario:p.usuario||v.vendedor||'',
+                       usd:(p.usd==null?null:Number(p.usd)), cotiz:(p.cotiz==null?null:Number(p.cotiz)),
+                       /* Si el pago lo cobró un chofer, esto viaja con él: si se perdiera
+                          acá, al confirmar el cobro esa plata dejaría de figurar como
+                          pendiente de rendir y el chofer quedaría en cero sin haber rendido. */
+                       chofer:p.chofer||null, rendido:p.rendido===true,
+                       rendido_fecha:p.rendido_fecha||null, rendido_por:p.rendido_por||''}))
+    : (cobradoPrevio>0 ? [{monto:cobradoPrevio, metodo:'Inicial', fecha:v.fecha, usuario:v.vendedor||'', usd:null, cotiz:null}] : []);
   cobroEditIdx=null;
+  cobroNota=v.notaCobros||"";
   renderCobros(nro);
 }
 
 function cobroSum(){ return cobroWork.reduce((a,p)=>a+Number(p.monto||0),0); }
+function cobroSetNota(t){ cobroNota=t; }
 
 function renderCobros(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   const total=granTotal(v);
   const c=CLIENTES.find(x=>x.id===v.clienteId)||{}; const mail=c.mail||'';
   const restante=total-cobroSum();
-  const METODOS=['Efectivo','Transferencia','Tarjeta','Cuenta corriente'];
+  const METODOS=METODOS_COBRO;
 
   let lista;
   if(!cobroWork.length){
@@ -1869,31 +1903,46 @@ function renderCobros(nro){
       if(cobroEditIdx===i){
         const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===i?0:Number(x.monto||0)),0);
         const maxEdit=Math.max(0,total-sumOtros);
+        const usd=esPagoUSD(p.metodo);
+        const opciones=METODOS.map(m=>`<option ${p.metodo===m?'selected':''}>${m}</option>`).join('')
+          + (METODOS.includes(p.metodo)?'':`<option selected>${esc(p.metodo||'—')}</option>`);
         return `<div style="display:flex;align-items:center;gap:6px;padding:7px 0;flex-wrap:wrap;border-bottom:1px dashed var(--linea)">
-            <div class="money-input" style="flex:0 0 130px"><span>$</span><input type="number" id="cobEditMonto" class="no-spin" value="${p.monto}" min="0" max="${maxEdit}" oninput="cobroLiveTot(${nro})"></div>
-            <select id="cobEditMetodo" style="flex:1;min-width:130px">${METODOS.map(m=>`<option ${p.metodo===m?'selected':''}>${m}</option>`).join('')}</select>
+            <div class="money-input" id="cobEdPesos" style="flex:0 0 120px;${usd?'display:none':''}"><span>$</span><input type="number" id="cobEditMonto" class="no-spin" value="${usd?'':p.monto}" min="0" max="${maxEdit}" oninput="cobroLiveTot(${nro})"></div>
+            <div class="money-input usd" id="cobEdUsd" style="flex:0 0 118px;${usd?'':'display:none'}" title="Dólares recibidos"><span>US$</span><input type="number" id="cobEditUsd" class="no-spin" value="${p.usd||''}" min="0" placeholder="0" oninput="cobroLiveTot(${nro})"></div>
+            <div class="money-input" id="cobEdCotiz" style="flex:0 0 118px;${usd?'':'display:none'}" title="Cotización del dólar"><span>$</span><input type="number" id="cobEditCotiz" class="no-spin" value="${p.cotiz||''}" min="0" placeholder="cotiz." oninput="cobroLiveTot(${nro})"></div>
+            <select id="cobEditMetodo" style="flex:1;min-width:130px" onchange="cobroEditCambioMetodo(${nro})">${opciones}</select>
             <button class="btn btn-green btn-sm" onclick="cobroSavePago(${nro},${i})">Guardar</button>
             <button class="btn btn-ghost btn-sm" onclick="cobroCancelEdit(${nro})">Cancelar</button>
+            <div id="cobEditEquiv" class="legend" style="flex:1 0 100%;${usd?'':'display:none'}"></div>
           </div>`;
       }
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px dashed var(--linea)">
-          <span><b>${money(p.monto)}</b> <span class="legend">· ${esc(p.metodo||'—')}${p.fecha?` · ${fmtFechaCorta(p.fecha)}`:''}</span></span>
+          <span><b>${money(p.monto)}</b> <span class="legend">· ${esc(textoMetodoPago(p))}${p.fecha?` · ${fmtFechaCorta(p.fecha)}`:''}</span></span>
           <span><button class="btn btn-ghost btn-sm" title="Editar este cobro" onclick="cobroEditPago(${nro},${i})">✏️</button> <button class="btn btn-ghost btn-sm" title="Quitar este cobro" onclick="cobroDelPago(${nro},${i})">🗑️</button></span>
         </div>`;
     }).join("");
   }
 
   const adder = (restante>0 && cobroEditIdx===null)
-    ? `<div class="row" style="align-items:end;margin-top:10px">
-         <div class="field" style="flex:0 0 150px"><label>Agregar pago</label><div class="money-input"><span>$</span><input type="number" id="cobMonto" class="no-spin" value="${restante}" min="0" max="${restante}" placeholder="0"></div></div>
-         <div class="field" style="flex:2"><label>Método</label><select id="cobMetodo">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select></div>
+    ? `<div class="row" style="align-items:end;margin-top:10px;flex-wrap:wrap">
+         <div class="field" id="cobBloquePesos" style="flex:0 0 150px"><label>Agregar pago</label><div class="money-input"><span>$</span><input type="number" id="cobMonto" class="no-spin" value="${restante}" min="0" max="${restante}" placeholder="0"></div></div>
+         <div class="field" id="cobBloqueUsd" style="flex:0 0 128px;display:none"><label>Dólares</label><div class="money-input usd"><span>US$</span><input type="number" id="cobUsd" class="no-spin" min="0" placeholder="0" oninput="cobroPrevioUsd()"></div></div>
+         <div class="field" id="cobBloqueCotiz" style="flex:0 0 128px;display:none"><label>Cotización</label><div class="money-input"><span>$</span><input type="number" id="cobCotiz" class="no-spin" min="0" placeholder="0" oninput="cobroPrevioUsd()"></div></div>
+         <div class="field" style="flex:1;min-width:145px"><label>Método</label><select id="cobMetodo" onchange="cobroCambioMetodo()">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select></div>
          <button class="btn btn-green" onclick="cobroAddPago(${nro})">＋ Pago</button>
-       </div>`
+       </div>
+       <div class="help" id="cobEquiv" style="display:none;margin-top:8px"></div>`
     : (cobroEditIdx===null ? `<div class="help" style="margin-top:8px">La venta queda <b>saldada</b> ($0). Si te equivocaste, editá (✏️) o quitá (🗑️) un cobro.</div>` : '');
 
   /* Este tilde arranca APAGADO a propósito: cobrar no tiene por qué mandarle un
      mail al cliente. Si se quiere avisar, se tilda antes de confirmar. */
   const mailRow = `<div class="switch" style="margin-top:12px"><input type="checkbox" id="cobMail" ${mail?'':'disabled'} style="width:auto"><label for="cobMail" style="text-transform:none;font-weight:600;color:#374151">Enviar comprobante (remito) actualizado por mail al cliente${mail?' <span style="font-weight:600;color:#6b7280">(opcional)</span>':' — este cliente no tiene email'}</label></div>`;
+
+  /* La nota vive en `cobroNota` y no en el textarea, porque cada vez que se
+     agrega o se borra un cobro se vuelve a dibujar todo el modal: si el texto
+     viviera solo en el HTML, se perdería lo escrito. */
+  const notaRow = `<div class="field" style="margin-top:12px"><label>Notas del cobro (opcional)</label>
+       <textarea id="cobNota" style="min-height:62px" oninput="cobroSetNota(this.value)" placeholder="Ej.: entregó US$ 2.000 en mano a Omar, el resto lo transfiere el viernes.">${esc(cobroNota)}</textarea></div>`;
 
   $("#modalRoot").innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
@@ -1905,6 +1954,7 @@ function renderCobros(nro){
           <div>${lista}</div>
           ${adder}
           ${cobroEditIdx===null?mailRow:''}
+          ${cobroEditIdx===null?notaRow:''}
           <div class="suma" style="box-shadow:none;border:1px solid var(--linea);margin-top:14px" id="cobTotales"></div>
         </div>
         <div class="foot">
@@ -1914,6 +1964,36 @@ function renderCobros(nro){
       </div>
     </div>`;
   cobroRenderTot(nro);
+  if(cobroEditIdx!==null) cobroLiveTot(nro);
+}
+
+/* ---- Dólares: mostrar/ocultar los campos y avisar cuánto es en pesos ---- */
+function cobroCambioMetodo(){
+  const usd=esPagoUSD($("#cobMetodo")?.value);
+  const ver=(id,mostrar)=>{ const el=$("#"+id); if(el) el.style.display = mostrar?'':'none'; };
+  ver('cobBloquePesos', !usd); ver('cobBloqueUsd', usd); ver('cobBloqueCotiz', usd);
+  const eq=$("#cobEquiv"); if(eq) eq.style.display = usd?'':'none';
+  if(usd){ $("#cobUsd")?.focus(); }
+  cobroPrevioUsd();
+}
+function cobroPrevioUsd(){
+  const eq=$("#cobEquiv"); if(!eq) return;
+  const usd=Math.max(0,+($("#cobUsd")?.value||0)), cot=Math.max(0,+($("#cobCotiz")?.value||0));
+  eq.innerHTML = (usd>0&&cot>0)
+    ? `US$ ${usdAR(usd)} × ${money(cot)} = <b>${money(usd*cot)}</b>`
+    : `Poné cuántos dólares recibiste y a cuánto tomaste el dólar.`;
+}
+function cobroEditCambioMetodo(nro){
+  const usd=esPagoUSD($("#cobEditMetodo")?.value);
+  const ver=(id,mostrar)=>{ const el=$("#"+id); if(el) el.style.display = mostrar?'':'none'; };
+  ver('cobEdPesos', !usd); ver('cobEdUsd', usd); ver('cobEdCotiz', usd); ver('cobEditEquiv', usd);
+  cobroLiveTot(nro);
+}
+/* Cuánto vale, en pesos, lo que hay escrito ahora mismo en la fila que se edita. */
+function cobroMontoEditado(){
+  if(esPagoUSD($("#cobEditMetodo")?.value))
+    return Math.max(0,+($("#cobEditUsd")?.value||0)) * Math.max(0,+($("#cobEditCotiz")?.value||0));
+  return Math.max(0,+($("#cobEditMonto")?.value||0));
 }
 
 function cobroTotHTML(total, cobrado){
@@ -1932,18 +2012,49 @@ function cobroLiveTot(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   const total=granTotal(v);
   const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===cobroEditIdx?0:Number(x.monto||0)),0);
-  let nm=Math.max(0,+($("#cobEditMonto")?.value||0)); nm=Math.min(nm, Math.max(0,total-sumOtros));
+  let nm=cobroMontoEditado(); nm=Math.min(nm, Math.max(0,total-sumOtros));
   el.innerHTML=cobroTotHTML(total, sumOtros+nm);
+  const eq=$("#cobEditEquiv");
+  if(eq && esPagoUSD($("#cobEditMetodo")?.value)){
+    const u=Math.max(0,+($("#cobEditUsd")?.value||0)), c=Math.max(0,+($("#cobEditCotiz")?.value||0));
+    eq.innerHTML = (u>0&&c>0) ? `US$ ${usdAR(u)} × ${money(c)} = <b>${money(u*c)}</b>` : `Falta la cantidad de dólares o la cotización.`;
+  }
 }
 
 function cobroAddPago(nro){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   const restante=granTotal(v)-cobroSum();
-  let monto=Math.max(0, +($("#cobMonto")?.value||0));
-  monto=Math.min(monto, Math.max(0,restante));
-  if(monto<=0){ toast("⚠️ Ingresá un monto mayor a 0"); return; }
   const metodo=$("#cobMetodo")?.value||'Efectivo';
-  cobroWork.push({monto, metodo, fecha:hoyISO(), usuario:nombreUsuario()});
+  let monto, usd=null, cotiz=null;
+
+  if(esPagoUSD(metodo)){
+    usd=Math.max(0,+($("#cobUsd")?.value||0));
+    cotiz=Math.max(0,+($("#cobCotiz")?.value||0));
+    if(usd<=0){  toast("⚠️ Poné cuántos dólares recibiste"); return; }
+    if(cotiz<=0){ toast("⚠️ Falta la cotización del dólar"); return; }
+    monto=usd*cotiz;
+  } else {
+    monto=Math.max(0,+($("#cobMonto")?.value||0));
+  }
+  if(monto<=0){ toast("⚠️ Ingresá un monto mayor a 0"); return; }
+
+  /* Si el cobro pasa el saldo, se registra solo lo que faltaba (igual que
+     siempre). En dólares además se recalculan los dólares que quedan
+     aplicados, para que el importe en pesos y el detalle nunca se
+     contradigan; la diferencia es vuelto y se avisa. */
+  if(monto > restante + 0.5){
+    if(esPagoUSD(metodo)){
+      const usdAplica=Math.round((restante/cotiz)*100)/100;   // 2 decimales: es plata, no un número de laboratorio
+      toast(`⚠️ US$ ${usdAR(usd)} son ${money(monto)} y faltaban ${money(restante)}: se aplican US$ ${usdAR(usdAplica)}, el resto es vuelto`);
+      usd=usdAplica;
+    } else {
+      toast(`⚠️ Faltaban ${money(restante)}: se registra ese importe`);
+    }
+    monto=restante;
+  }
+  monto=Math.min(monto, Math.max(0,restante));
+
+  cobroWork.push({monto, metodo, usd, cotiz, fecha:hoyISO(), usuario:nombreUsuario()});
   renderCobros(nro);
 }
 function cobroDelPago(nro, idx){ cobroWork.splice(idx,1); cobroEditIdx=null; renderCobros(nro); }
@@ -1953,9 +2064,25 @@ function cobroSavePago(nro, idx){
   const v=VENTAS.find(x=>x.nro===nro); if(!v) return;
   const total=granTotal(v);
   const sumOtros=cobroWork.reduce((a,x,j)=>a+(j===idx?0:Number(x.monto||0)),0);
-  let nm=Math.max(0,+($("#cobEditMonto")?.value||0)); nm=Math.min(nm, Math.max(0,total-sumOtros));
+  const maxEdit=Math.max(0,total-sumOtros);
+  const metodo=$("#cobEditMetodo")?.value||cobroWork[idx].metodo;
+  let usd=null, cotiz=null, nm;
+
+  if(esPagoUSD(metodo)){
+    usd=Math.max(0,+($("#cobEditUsd")?.value||0));
+    cotiz=Math.max(0,+($("#cobEditCotiz")?.value||0));
+    if(usd<=0){  toast("⚠️ Poné cuántos dólares recibiste"); return; }
+    if(cotiz<=0){ toast("⚠️ Falta la cotización del dólar"); return; }
+    nm=usd*cotiz;
+    if(nm>maxEdit+0.5){ usd=Math.round((maxEdit/cotiz)*100)/100; toast(`⚠️ Se pasaba del total: quedan US$ ${usdAR(usd)}`); }
+  } else {
+    nm=Math.max(0,+($("#cobEditMonto")?.value||0));
+  }
+  nm=Math.min(nm, maxEdit);
   if(nm<=0){ toast("⚠️ El monto debe ser mayor a 0 (o usá 🗑️ para quitarlo)"); return; }
-  cobroWork[idx].monto=nm; cobroWork[idx].metodo=$("#cobEditMetodo")?.value||cobroWork[idx].metodo;
+
+  cobroWork[idx].monto=nm; cobroWork[idx].metodo=metodo;
+  cobroWork[idx].usd=usd; cobroWork[idx].cotiz=cotiz;
   cobroEditIdx=null; renderCobros(nro);
 }
 
@@ -1966,10 +2093,17 @@ function confirmarCobros(nro){
   const total=granTotal(v);
   const cobrado=cobroSum();
   const saldoPrev=Number(v.saldo||0);
-  v.pagos=cobroWork.map(p=>({monto:Number(p.monto||0), metodo:p.metodo, fecha:p.fecha||hoyISO(), usuario:p.usuario||nombreUsuario()}));
+  const notaPrev=v.notaCobros||"";
+  v.pagos=cobroWork.map(p=>({monto:Number(p.monto||0), metodo:p.metodo, fecha:p.fecha||hoyISO(), usuario:p.usuario||nombreUsuario(),
+                             usd:(esPagoUSD(p.metodo)&&p.usd>0)?Number(p.usd):null,
+                             cotiz:(esPagoUSD(p.metodo)&&p.cotiz>0)?Number(p.cotiz):null,
+                             chofer:p.chofer||null, rendido:p.rendido===true,
+                             rendido_fecha:p.rendido_fecha||null, rendido_por:p.rendido_por||''}));
   v.saldo=Math.max(0, total-cobrado);
-  const detalle=cobroWork.length?cobroWork.map(p=>`${money(p.monto)} (${p.metodo})`).join(', '):'sin cobros';
-  auditar("Cobros actualizados","venta",nro,`saldo ${money(saldoPrev)} → ${money(v.saldo)} · ${detalle}`);
+  v.notaCobros=(cobroNota||"").trim();
+  const detalle=cobroWork.length?cobroWork.map(p=>`${money(p.monto)} (${textoMetodoPago(p)})`).join(', '):'sin cobros';
+  const extra=(v.notaCobros!==notaPrev)?' · nota del cobro modificada':'';
+  auditar("Cobros actualizados","venta",nro,`saldo ${money(saldoPrev)} → ${money(v.saldo)} · ${detalle}${extra}`);
   cerrarModal(); renderTablaVentas();
   toast(`✅ Cobros guardados · saldo ${money(v.saldo)}`);
 }
@@ -2587,6 +2721,221 @@ async function exportarRutaExcel(){
   }catch(ex){ toast("⚠️ Error generando el Excel: "+(ex.message||ex)); }
 }
 
+/* ====== SISTEMA VIEJO (ventas heredadas del sistema anterior) ==============
+   Son ventas hechas en otro sistema que todavía hay que entregar. Se cargan
+   acá para poder repartirlas y cobrarlas, pero quedan fuera de los reportes,
+   del ranking y de la lista de Ventas: no son ventas del sistema nuevo y
+   mezclarlas rompería la facturación por mes.
+   Nunca se les manda mail: el cliente ya recibió el suyo del sistema viejo. */
+
+let impFilas = [];   // lo que se leyó del Excel, antes de confirmar
+
+function ventasViejas(){ return VENTAS.filter(v=>esVentaVieja(v) && !v.cancelada); }
+
+function viewSistemaViejo(){
+  const filas = ventasViejas();
+  const pendientes = filas.filter(v=>!/entregado|post venta/i.test(v.estado||''));
+  const aCobrar = filas.reduce((a,v)=>a+Number(v.saldo||0),0);
+
+  $("#main").innerHTML = `
+    <h1 class="page">📦 Sistema viejo</h1>
+    <div class="hint">Ventas que venían del sistema anterior y todavía hay que entregar.
+      <b>No cuentan en los reportes ni en el equipo de ventas</b>, y a estos clientes el sistema
+      nunca les manda mails. Sí se les puede asignar chofer y cobrarles el saldo, como a cualquier venta.</div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="t">Ventas heredadas</div><div class="n">${filas.length}</div></div>
+      <div class="kpi"><div class="t">Todavía sin entregar</div><div class="n">${pendientes.length}</div></div>
+      <div class="kpi"><div class="t">Falta cobrar</div><div class="n ${aCobrar>0?'':'green'}">${money(aCobrar)}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <div><h3>Listado</h3><span class="legend">${filas.length} venta${filas.length===1?'':'s'} heredada${filas.length===1?'':'s'}</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-green btn-sm" onclick="abrirImportarViejo()">📥 Importar desde Excel</button>
+          ${filas.length?`<button class="btn btn-ghost btn-sm" onclick="abrirBorrarViejo()" title="Cuando ya entregaste todas">🗑️ Borrar todas</button>`:''}
+        </div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>N°</th><th>Cliente</th><th>Localidad</th><th>Teléfono</th><th>Qué lleva</th><th>Entrega</th><th class="r">Saldo</th><th>Estado</th><th>Acciones</th></tr></thead>
+        <tbody id="tViejo"></tbody>
+      </table></div>
+    </div>`;
+  renderTablaViejo();
+}
+
+function renderTablaViejo(){
+  const tb=$("#tViejo"); if(!tb) return;
+  const filas = ventasViejas();
+  if(!filas.length){
+    tb.innerHTML = `<tr><td colspan="9" class="empty">Todavía no cargaste ninguna venta del sistema viejo.<br><br>
+      Usá <b>📥 Importar desde Excel</b> para subirlas todas juntas.</td></tr>`;
+    return;
+  }
+  tb.innerHTML = filas.map(v=>{
+    const c = CLIENTES.find(x=>x.id===v.clienteId)||{};
+    const qué = (v.items||[]).map(i=>i.nombre).join(' + ') || '—';
+    const estadoCell = (esMaestro()||esAdmin())
+      ? `<select class="estado-sel" onchange="cambiarEstadoInline(${v.nro}, this.value)">${ESTADOS.map(e=>`<option ${v.estado===e.nombre?'selected':''}>${esc(e.nombre)}</option>`).join("")}</select>`
+      : estBadge(v.estado);
+    return `<tr>
+      <td><b>#${v.nro}</b></td>
+      <td><b>${esc(v.cliente)}</b></td>
+      <td>${esc(c.localidad||v.localidad||'—')}</td>
+      <td>${esc(c.tel||'—')}</td>
+      <td>${esc(qué)}</td>
+      <td>${fmtFechaCorta(v.entrega)}</td>
+      <td class="r"><b style="color:${Number(v.saldo||0)>0?'var(--rojo)':'var(--ok)'}">${money(v.saldo)}</b></td>
+      <td>${estadoCell}</td>
+      <td class="acts">
+        ${(Number(v.saldo||0)>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin())?`<button class="btn btn-ghost btn-sm" title="Cobros / saldo" onclick="cobrarSaldo(${v.nro})">💲</button>`:''}
+        <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button>
+        <button class="btn btn-ghost btn-sm" title="Borrar esta venta heredada" onclick="borrarVentaVieja(${v.nro})">🗑️</button>
+      </td></tr>`;
+  }).join("");
+}
+
+/* ---------- Importar desde Excel ---------- */
+function abrirImportarViejo(){
+  if(!(esMaestro()||esAdmin())){ toast("No tenés permiso"); return; }
+  impFilas = [];
+  $("#modalRoot").innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+      <div class="modal" style="max-width:760px">
+        <header><h3>📥 Importar ventas del sistema viejo</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+        <div class="body">
+          <div class="help" style="margin-top:0">Subí el Excel tal como lo tenés. El sistema busca solo las columnas
+            que necesita y te muestra qué entendió <b>antes</b> de guardar nada.</div>
+          <div style="margin:16px 0">
+            <input type="file" id="impArchivo" accept=".xlsx,.xls,.csv" onchange="leerArchivoViejo(this)">
+          </div>
+          <div id="impPreview"></div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+          <button class="btn btn-green" id="btnImportarViejo" onclick="confirmarImportarViejo()" style="display:none">Importar</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* Busca una columna por varios nombres posibles, sin importar acentos ni mayúsculas. */
+function _col(fila, nombres){
+  const claves = Object.keys(fila);
+  for(const n of nombres){
+    const k = claves.find(k=>normalizarTexto(k).replace(/[^a-z0-9]/g,'').includes(normalizarTexto(n).replace(/[^a-z0-9]/g,'')));
+    if(k!=null && String(fila[k]).trim()!=='') return String(fila[k]).trim();
+  }
+  return '';
+}
+function _num(t){
+  const s = String(t==null?'':t).replace(/[^\d,.-]/g,'').replace(/\.(?=\d{3}\b)/g,'').replace(',','.');
+  const n = parseFloat(s); return isNaN(n) ? 0 : n;
+}
+/* Acepta 12/08/2026, 2026-08-12 y el número de fecha propio de Excel. */
+function _fecha(t){
+  if(t==null || t==='') return '';
+  if(typeof t === 'number'){
+    const d = new Date(Date.UTC(1899,11,30) + t*86400000);
+    return isNaN(d) ? '' : d.toISOString().slice(0,10);
+  }
+  const s = String(t).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if(m){ const a = m[3].length===2 ? '20'+m[3] : m[3];
+    return `${a}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
+  return '';
+}
+
+function leerArchivoViejo(input){
+  const f = input.files && input.files[0]; if(!f) return;
+  const prev = $("#impPreview");
+  prev.innerHTML = `<div class="legend">Leyendo el archivo…</div>`;
+  const lector = new FileReader();
+  lector.onload = function(ev){
+    try{
+      if(!window.XLSX) throw new Error('No se pudo cargar el lector de Excel. Revisá la conexión a internet.');
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      const crudo = XLSX.utils.sheet_to_json(hoja, {defval:''});
+      if(!crudo.length) throw new Error('El archivo no tiene filas.');
+
+      impFilas = crudo.map(f=>({
+        cliente:   _col(f, ['cliente','nombre y apellido','apellido y nombre','nombre']),
+        apellido:  _col(f, ['apellido']),
+        dni:       _col(f, ['dni','documento','cuit']),
+        tel:       _col(f, ['telefono','tel','celular','contacto']),
+        mail:      _col(f, ['email','mail','correo']),
+        provincia: _col(f, ['provincia']),
+        localidad: _col(f, ['localidad','ciudad','domicilio','direccion']),
+        productos: _col(f, ['producto','productos','piscina','pileta','modelo','que compro','detalle']),
+        entrega:   _fecha(_col(f, ['entrega','fecha de entrega','fecha entrega','prometida'])),
+        total:     _num(_col(f, ['total','importe','precio'])),
+        saldo:     _num(_col(f, ['saldo','pendiente','debe','resta'])),
+        vendedor:  _col(f, ['vendedor','vendedora'])
+      })).filter(r=>r.cliente);
+
+      if(!impFilas.length) throw new Error('No encontré ninguna columna con el nombre del cliente. Revisá que el Excel tenga un encabezado con "Cliente" o "Nombre".');
+
+      const faltaEntrega = impFilas.filter(r=>!r.entrega).length;
+      const faltaSaldo   = impFilas.filter(r=>!r.saldo).length;
+      prev.innerHTML = `
+        <div class="help" style="background:#eaf3ef;border-color:#cfe6dc;color:#2c5446">
+          Encontré <b>${impFilas.length} venta${impFilas.length===1?'':'s'}</b> en el archivo.
+          ${faltaEntrega?`<br>⚠️ ${faltaEntrega} sin fecha de entrega (las vas a poder completar después).`:''}
+          ${faltaSaldo?`<br>⚠️ ${faltaSaldo} sin saldo pendiente (van a quedar en $ 0).`:''}
+        </div>
+        <div class="table-wrap" style="margin-top:14px;max-height:300px;overflow:auto"><table>
+          <thead><tr><th>Cliente</th><th>Localidad</th><th>Teléfono</th><th>Qué lleva</th><th>Entrega</th><th class="r">Saldo</th></tr></thead>
+          <tbody>${impFilas.slice(0,50).map(r=>`<tr>
+            <td><b>${esc(r.cliente)} ${esc(r.apellido)}</b></td>
+            <td>${esc(r.localidad||'—')}</td>
+            <td>${esc(r.tel||'—')}</td>
+            <td>${esc(r.productos||'—')}</td>
+            <td>${r.entrega?fmtFechaCorta(r.entrega):'—'}</td>
+            <td class="r">${money(r.saldo)}</td></tr>`).join('')}</tbody>
+        </table></div>
+        ${impFilas.length>50?`<div class="legend" style="margin-top:8px">Se muestran las primeras 50; se importan las ${impFilas.length}.</div>`:''}`;
+      const btn = $("#btnImportarViejo");
+      if(btn){ btn.style.display=''; btn.textContent = `Importar ${impFilas.length} venta${impFilas.length===1?'':'s'}`; }
+    }catch(ex){
+      impFilas = [];
+      prev.innerHTML = `<div class="help" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c">⚠️ ${esc(ex.message||ex)}</div>`;
+      const btn = $("#btnImportarViejo"); if(btn) btn.style.display='none';
+    }
+  };
+  lector.readAsArrayBuffer(f);
+}
+
+/* ---------- Borrar ---------- */
+function abrirBorrarViejo(){
+  const n = ventasViejas().length;
+  $("#modalRoot").innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+      <div class="modal" style="max-width:480px">
+        <header><h3>🗑️ Borrar las ventas heredadas</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+        <div class="body">
+          <p style="font-size:15px;line-height:1.6">Vas a borrar <b>${n} venta${n===1?'':'s'}</b> del sistema viejo,
+            con sus productos y sus pagos.</p>
+          <div class="help" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;margin-top:12px">
+            Esto no se puede deshacer. Hacelo recién cuando ya hayas entregado todas.
+            <b>Las ventas del sistema nuevo no se tocan.</b>
+          </div>
+        </div>
+        <div class="foot">
+          <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+          <button class="btn btn-blue" style="background:var(--rojo)" id="btnBorrarViejo" onclick="confirmarBorrarViejo()">Sí, borrar las ${n}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* En demo solo avisan; conexion.js los reemplaza para tocar la base. */
+function confirmarImportarViejo(){ toast("⚠️ Sin conexión a la base no se puede importar"); }
+function confirmarBorrarViejo(){ toast("⚠️ Sin conexión a la base no se puede borrar"); }
+function borrarVentaVieja(nro){ toast("⚠️ Sin conexión a la base no se puede borrar"); }
+
 /* ====== CLIENTES ====== */
 function cliFiltrados(){
   const q=(cliQuery||'').trim().toLowerCase();
@@ -3020,7 +3369,7 @@ function generarHistorial(){
 }
 function historialDesdeVentas(vts){
   const L=[];
-  vts.forEach(v=>{ if(v.cancelada) return; (v.items||[]).forEach(i=>{
+  vts.forEach(v=>{ if(v.cancelada || esVentaVieja(v)) return; (v.items||[]).forEach(i=>{
     L.push({fecha:v.fecha,vendedor:v.vendedor,provincia:v.provincia||"Otras / s.d.",estado:v.estado||"",categoria:i.categoria||"Accesorios",producto:i.nombre,unidades:i.cant,monto:i.precio*i.cant});
   }); });
   return L;

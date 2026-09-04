@@ -70,9 +70,9 @@ async function cargarTodo(){
   CLIENTES.length=0; (c.data||[]).forEach(r=>CLIENTES.push({id:r.id,nombre:r.nombre,apellido:r.apellido,dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,domicilio:r.domicilio||'',saldo:Number(r.saldo||0),activo:r.activo!==false}));
   ESTADOS.length=0; (e.data||[]).forEach(r=>ESTADOS.push({nombre:r.nombre,color:r.color||'gris'}));
   CATEGORIAS.length=0; (cat.data||[]).forEach(r=>CATEGORIAS.push(r.nombre));
-  const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({id:r.id,monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||'',chofer:r.chofer||null,rendido:r.rendido===true,rendido_fecha:r.rendido_fecha||null,rendido_por:r.rendido_por||''});});
+  const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({id:r.id,monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||'',chofer:r.chofer||null,rendido:r.rendido===true,rendido_fecha:r.rendido_fecha||null,rendido_por:r.rendido_por||'',usd:(r.usd==null?null:Number(r.usd)),cotiz:(r.cotizacion==null?null:Number(r.cotizacion))});});
   const byV={}; (vi.data||[]).forEach(r=>{(byV[r.venta_id]=byV[r.venta_id]||[]).push({nombre:r.nombre,precio:Number(r.precio),cant:r.cantidad,categoria:r.categoria});});
-  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',chofer:r.chofer||null,items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
+  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',notaCobros:r.nota_cobros||'',chofer:r.chofer||null,origen:r.origen||null,items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
   HISTORIAL.length=0; historialDesdeVentas(VENTAS).forEach(l=>HISTORIAL.push(l));
   USUARIOS.length=0; (per.data||[]).forEach(r=>USUARIOS.push({id:r.id,nombre:r.nombre||'',ap:r.apellido||'',user:r.usuario||'',rol:r.rol,activo:r.activo!==false,pass:'••••'}));
   AUDITORIA.length=0; audData.forEach(r=>AUDITORIA.push({usuario:r.usuario||'',rol:r.rol||'',accion:r.accion||'',entidad:r.entidad||'',entidad_id:r.entidad_id||'',detalle:r.detalle||'',creado:r.creado}));
@@ -567,14 +567,25 @@ window.confirmarCobros = async function(nro){
        falla, los cobros originales siguen en la base (antes se perdían). */
     const {data:viejos}=await SB.from('pagos').select('id').eq('venta_id', nro);
     if(v.pagos && v.pagos.length){
-      const r=await SB.from('pagos').insert(v.pagos.map(p=>({venta_id:nro, monto:p.monto, metodo:p.metodo, fecha:p.fecha, usuario:p.usuario})));
+      const r=await SB.from('pagos').insert(v.pagos.map(p=>({
+        venta_id:nro, monto:p.monto, metodo:p.metodo, fecha:p.fecha, usuario:p.usuario,
+        /* `monto` va siempre en pesos; estos tres son el respaldo de cómo se
+           llegó a ese número cuando el cobro se hizo en dólares. */
+        moneda:(p.usd>0&&p.cotiz>0)?'USD':'ARS',
+        usd:(p.usd>0?p.usd:null), cotizacion:(p.cotiz>0?p.cotiz:null),
+        /* Los pagos se borran y se vuelven a insertar, así que hay que reponer
+           quién los cobró y si ya los rindió: sin esto, confirmar un cobro le
+           borraba la deuda al chofer sin que nadie hubiera rendido nada. */
+        chofer:(p.chofer||null), rendido:(p.rendido===true),
+        rendido_fecha:(p.rendido_fecha||null), rendido_por:(p.rendido_por||null)
+      })));
       if(r.error) throw r.error;
     }
     if(viejos && viejos.length){
       const rd=await SB.from('pagos').delete().in('id', viejos.map(x=>x.id));
       if(rd.error) throw rd.error;
     }
-    const r2=await SB.from('ventas').update({saldo:v.saldo}).eq('id', nro);
+    const r2=await SB.from('ventas').update({saldo:v.saldo, nota_cobros:v.notaCobros||null}).eq('id', nro);
     if(r2.error) throw r2.error;
     respaldarEnSheet(nro);
   }catch(ex){
@@ -748,4 +759,123 @@ window.confirmarRendicion = function(){
       try{ await cargarTodo(); viewChoferes(); }catch(_){}
     }
   });
+};
+
+/* ====== SISTEMA VIEJO: importar, borrar =====================================
+   Las ventas heredadas se guardan en la misma tabla pero con origen='viejo'.
+   Esa marca es la que las mantiene fuera de los reportes y del ranking, y la
+   que permite borrarlas todas juntas el día que se terminen de entregar.
+   Acá NUNCA se manda mail ni se descuenta stock: son ventas viejas, el cliente
+   ya recibió su comprobante y esa mercadería ya salió del galpón. */
+
+window.confirmarImportarViejo = function(){
+  return unSoloGuardado('importarViejo', '#btnImportarViejo', async function(){
+    if(!impFilas.length){ toast("⚠️ No hay nada para importar"); return; }
+    let creadas=0, fallidas=0;
+    const btn = $("#btnImportarViejo");
+    try{
+      for(let i=0;i<impFilas.length;i++){
+        const r = impFilas[i];
+        if(btn) btn.textContent = `Importando ${i+1} de ${impFilas.length}…`;
+        try{
+          /* 1) El cliente: si el DNI ya está cargado reusamos esa ficha,
+                así no se duplican los que ya existen en el sistema nuevo. */
+          const soloNum = t => String(t==null?'':t).replace(/\D/g,'');
+          let cli = r.dni ? CLIENTES.find(x=>soloNum(x.dni) && soloNum(x.dni)===soloNum(r.dni)) : null;
+          if(!cli){
+            const fila = {nombre:r.cliente, apellido:r.apellido||'', dni:r.dni||'',
+                          telefono:r.tel||'', email:r.mail||'', provincia:r.provincia||'',
+                          localidad:r.localidad||''};
+            const ins = await SB.from('clientes').insert(fila).select().single();
+            if(ins.error) throw ins.error;
+            cli = {id:ins.data.id, nombre:fila.nombre, apellido:fila.apellido, dni:fila.dni,
+                   tel:fila.telefono, mail:fila.email, provincia:fila.provincia,
+                   localidad:fila.localidad, domicilio:'', saldo:0, activo:true};
+            CLIENTES.push(cli);
+          }
+
+          /* 2) La venta, marcada como heredada. */
+          const total = Number(r.total||0) || Number(r.saldo||0);
+          const venta = {
+            cliente_id: cli.id,
+            cliente_nombre: `${r.cliente} ${r.apellido||''}`.trim(),
+            vendedor: r.vendedor || 'Sistema viejo',
+            fecha: hoyISO(), entrega: r.entrega || null,
+            total, iva: 0, factura: false, saldo: Number(r.saldo||0),
+            estado: 'Procesando pedido',
+            provincia: r.provincia || '', localidad: r.localidad || '',
+            nota: 'Venta heredada del sistema anterior',
+            origen: 'viejo'
+          };
+          const vIns = await SB.from('ventas').insert(venta).select().single();
+          if(vIns.error) throw vIns.error;
+          const nro = vIns.data.id;
+
+          /* 3) Lo que lleva. Viene como texto ("Minipiscina 370 + Luz Led"),
+                así que lo partimos y le ponemos precio 0 salvo al primero:
+                acá no interesa el detalle comercial, solo qué hay que entregar. */
+          const nombres = String(r.productos||'').split(/\s*[+;,\/]\s*|\s{2,}/).map(x=>x.trim()).filter(Boolean);
+          const items = (nombres.length?nombres:['(sin detalle)']).map((n,idx)=>({
+            venta_id:nro, nombre:n, precio: idx===0?total:0, cantidad:1,
+            categoria: /minipiscina|pileta/i.test(n) ? 'Minipiscinas' : null
+          }));
+          const iIns = await SB.from('venta_items').insert(items);
+          if(iIns.error) throw iIns.error;
+
+          /* 4) En memoria, para verlo sin recargar. */
+          VENTAS.unshift({nro, cliente:venta.cliente_nombre, localidad:venta.localidad,
+            provincia:venta.provincia, total, iva:0, factura:false, saldo:venta.saldo,
+            estado:venta.estado, vendedor:venta.vendedor, fecha:venta.fecha,
+            entrega:venta.entrega||'', clienteId:cli.id, cancelada:false, nota:venta.nota,
+            origen:'viejo', chofer:null,
+            items: items.map(i=>({nombre:i.nombre, precio:i.precio, cant:i.cantidad, categoria:i.categoria})),
+            pagos: []});
+          creadas++;
+        }catch(exFila){ fallidas++; console.warn('Importando fila', i+1, exFila); }
+      }
+      auditar("Importación del sistema viejo","venta","", `${creadas} venta(s) importada(s)${fallidas?` · ${fallidas} con error`:''}`);
+      cerrarModal(); viewSistemaViejo();
+      toast(fallidas ? `✅ ${creadas} importadas · ⚠️ ${fallidas} con error (ver consola)`
+                     : `✅ ${creadas} venta${creadas===1?'':'s'} del sistema viejo importada${creadas===1?'':'s'}`);
+    }catch(ex){
+      toast("⚠️ Se cortó la importación: "+(ex.message||ex));
+      try{ await cargarTodo(); viewSistemaViejo(); }catch(_){}
+    }
+  });
+};
+
+/* Borrar TODAS las heredadas. Solo toca las que tienen origen='viejo': las del
+   sistema nuevo no se pueden borrar desde acá ni por error. */
+window.confirmarBorrarViejo = function(){
+  return unSoloGuardado('borrarViejo', '#btnBorrarViejo', async function(){
+    const ids = VENTAS.filter(v=>esVentaVieja(v)).map(v=>v.nro);
+    if(!ids.length){ toast("No hay ventas heredadas"); return; }
+    try{
+      const r = await SB.from('ventas').delete().eq('origen','viejo').select('id');
+      if(r.error) throw r.error;
+      if(!r.data || !r.data.length) throw new Error("no tenés permiso para borrarlas");
+      for(let i=VENTAS.length-1;i>=0;i--) if(esVentaVieja(VENTAS[i])) VENTAS.splice(i,1);
+      auditar("Sistema viejo borrado","venta","", `${r.data.length} venta(s) heredada(s) eliminada(s)`);
+      cerrarModal(); viewSistemaViejo();
+      toast(`✅ ${r.data.length} venta(s) heredada(s) borradas`);
+    }catch(ex){
+      toast("⚠️ No se pudieron borrar: "+(ex.message||ex));
+      try{ await cargarTodo(); viewSistemaViejo(); }catch(_){}
+    }
+  });
+};
+
+/* Borrar una sola venta heredada. */
+window.borrarVentaVieja = async function(nro){
+  const v = VENTAS.find(x=>x.nro===nro);
+  if(!v || !esVentaVieja(v)){ toast("Esa venta no es del sistema viejo"); return; }
+  if(!confirm(`¿Borrar la venta heredada #${nro} de ${v.cliente}?`)) return;
+  try{
+    const r = await SB.from('ventas').delete().eq('id',nro).eq('origen','viejo').select('id');
+    if(r.error) throw r.error;
+    if(!r.data || !r.data.length) throw new Error("no tenés permiso");
+    const i = VENTAS.findIndex(x=>x.nro===nro); if(i>=0) VENTAS.splice(i,1);
+    auditar("Venta heredada borrada","venta",nro,v.cliente);
+    viewSistemaViejo(); toast(`✅ Venta #${nro} borrada`);
+  }catch(ex){ toast("⚠️ No se pudo borrar: "+(ex.message||ex)); }
 };
