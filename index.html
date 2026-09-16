@@ -44,7 +44,10 @@
   .side a .ic{width:20px;text-align:center;opacity:.7}
   .side a:hover{background:#f3f6f5}
   .side a.active{background:#eaf3ef;border-left-color:var(--verde);color:var(--verde2)}
-  .main{flex:1;padding:22px;max-width:1200px}
+  /* min-width:0 hace que una tabla ancha se deslice dentro de su recuadro en
+     vez de estirar la página: sin esto, en una notebook las últimas columnas
+     (y sus botones) quedaban fuera de la pantalla. */
+  .main{flex:1;min-width:0;padding:22px;max-width:1200px}
   h1.page{font-size:30px;font-weight:800;border-bottom:2px solid #cbd5e1;padding-bottom:12px;margin-bottom:20px}
   /* Cards */
   .card{background:var(--card);border-radius:14px;box-shadow:var(--sombra);padding:18px;margin-bottom:18px}
@@ -88,6 +91,8 @@
   .cli-compra .cab .btn{padding:2px 6px;margin-left:auto}
   .cli-compra .que{font-weight:600;margin:1px 0}
   .cli-compra.canc .que{text-decoration:line-through;opacity:.7}
+  .cli-contacto{max-width:220px}
+  .cli-contacto .legend{word-break:break-all}
   /* Termómetro */
   .termo{position:relative;width:48px;height:210px;background:#eef2f7;border:2px solid #cbd5e1;border-radius:24px;overflow:hidden;flex-shrink:0}
   .termo-fill{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(#5a917d,#3f6f5e);transition:height .45s ease}
@@ -2915,13 +2920,13 @@ function resumenProductos(v){
 /* El saldo del cliente es lo que falta cobrar de sus ventas no canceladas.
    (clientes.saldo de la base nunca se actualiza: no sirve para esto.) */
 function saldoCliente(ventas){ return (ventas||[]).reduce((a,v)=>a+(v.cancelada?0:Number(v.saldo||0)),0); }
-function htmlComprasCliente(ventas){
+function htmlComprasCliente(ventas, conOjo=true){
   if(!ventas || !ventas.length) return `<span class="legend">Sin compras</span>`;
   return ventas.map(v=>{
     const ec=v.cancelada?COLORES.rojo:estColor(v.estado);
     return `<div class="cli-compra${v.cancelada?' canc':''}">
       <div class="cab"><b>Venta #${v.nro}</b><span class="legend">${fmtFechaCorta(v.fecha)}</span>
-        <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button></div>
+        ${conOjo?`<button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button>`:''}</div>
       <div class="que">${esc(resumenProductos(v)||'—')}</div>
       <div class="legend">${money(granTotal(v))} · entrega ${fmtFechaCorta(v.entrega)}</div>
       <span class="cont" style="background:${ec.bg};color:${ec.fg}">${v.cancelada?'Cancelada':esc(v.estado)}</span>
@@ -2960,7 +2965,7 @@ function viewClientes(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Compra</th><th>Saldo</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <thead><tr><th>Cliente</th><th>Contacto</th><th>Localidad</th><th>Compra</th><th>Saldo</th><th>Estado</th><th>Acciones</th></tr></thead>
         <tbody id="tCli"></tbody>
       </table>
       </div>
@@ -2974,8 +2979,46 @@ function renderCliTabla(){
   tb.innerHTML=rows.length?rows.map(c=>{
     const ventas=porCliente.get(c.id)||[];
     const saldo=saldoCliente(ventas);
-    return `<tr class="${c.activo===false?'inactivo':''}"><td><b>${esc(c.nombre)} ${esc(c.apellido)}</b></td><td>${esc(c.dni||'—')}</td><td>${esc(c.tel||'—')}</td><td>${esc(c.mail||'—')}</td><td>${esc(c.localidad||'—')}</td><td>${esc(c.provincia||'—')}</td><td>${htmlComprasCliente(ventas)}</td><td style="white-space:nowrap"><b style="color:${saldo>0?'var(--rojo)':'inherit'}">${money(saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
-  }).join(""):`<tr><td colspan="${gestor?10:9}" class="empty">Sin clientes con estos filtros.</td></tr>`;
+    /* Nombre+DNI, teléfono+email y localidad+provincia van de a dos por celda:
+       con una columna para cada dato la tabla no entraba en una notebook. */
+    const ojo = ventas.length
+      ? `<button class="btn btn-ghost btn-sm" title="Ver lo que compró (orden completa, con Copiar datos)" onclick="verComprasCliente(${c.id})">👁️</button>`
+      : `<button class="btn btn-ghost btn-sm" title="Todavía no compró" disabled style="opacity:.3;cursor:default">👁️</button>`;
+    return `<tr class="${c.activo===false?'inactivo':''}">
+      <td><b>${esc(c.nombre)} ${esc(c.apellido)}</b><div class="legend">DNI ${esc(c.dni||'—')}</div></td>
+      <td class="cli-contacto">${esc(c.tel||'—')}<div class="legend">${esc(c.mail||'—')}</div></td>
+      <td>${esc(c.localidad||'—')}<div class="legend">${esc(c.provincia||'')}</div></td>
+      <td>${htmlComprasCliente(ventas)}</td>
+      <td style="white-space:nowrap"><b style="color:${saldo>0?'var(--rojo)':'inherit'}">${money(saldo)}</b></td>
+      <td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>
+      <td class="acts" style="white-space:nowrap">${ojo}${gestor?`<button class="btn btn-ghost btn-sm" title="Editar cliente y fecha de entrega" onclick="abrirModalCliente('clientes',${c.id})">✏️</button><button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button>`:''}</td>
+    </tr>`;
+  }).join(""):`<tr><td colspan="7" class="empty">Sin clientes con estos filtros.</td></tr>`;
+}
+/* 👁️ de la lista de Clientes: abre la orden completa (la misma del 👁️ de
+   Ventas, con "Copiar datos"). Si el cliente tiene más de una compra vigente,
+   primero pregunta cuál. */
+function verComprasCliente(id){
+  const ventas=ventasPorCliente().get(id)||[];
+  if(!ventas.length){ toast("Este cliente todavía no tiene compras"); return; }
+  const vigentes=ventas.filter(v=>!v.cancelada);
+  const lista=vigentes.length?vigentes:ventas;
+  if(lista.length===1){ abrirOrden(lista[0].nro); return; }
+  const c=CLIENTES.find(x=>x.id===id)||{};
+  $("#modalRoot").innerHTML=`
+   <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal" style="max-width:520px">
+     <header><h3>Compras de ${esc(nombreClienteVenta(c))}</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <div class="body">
+       <p class="legend" style="margin-bottom:10px">Este cliente tiene ${lista.length} compras. Elegí cuál querés ver.</p>
+       ${lista.map(v=>`<div class="row" style="align-items:center;padding:10px 0;border-top:1px solid var(--linea)">
+         <div style="flex:1 1 200px;min-width:0">${htmlComprasCliente([v], false)}</div>
+         <button class="btn btn-green btn-sm" onclick="cerrarModal();abrirOrden(${v.nro})">👁️ Ver orden</button>
+       </div>`).join("")}
+     </div>
+     <div class="foot"><button class="btn btn-ghost" onclick="cerrarModal()">Cerrar</button></div>
+    </div>
+   </div>`;
 }
 function toggleCliente(id){
   if(!puede('gestionar_clientes')){ toast("No tenés permiso"); return; }
