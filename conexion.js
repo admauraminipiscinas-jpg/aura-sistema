@@ -236,12 +236,35 @@ window.guardarEdicionVenta = function(nro){
   const nuevos = (editDraft && editDraft.nuevosPagos) ? editDraft.nuevosPagos.slice() : [];
   const vAntes = VENTAS.find(x=>x.nro===nro);
   const copiaPrevia = vAntes ? JSON.parse(JSON.stringify(vAntes)) : null;
+  /* Foto del cliente y de la copia de su nombre en cada venta, para poder
+     volver atrás si la base rechaza el cambio. */
+  const cli = vAntes ? CLIENTES.find(x=>x.id===vAntes.clienteId) : null;
+  const cliPrevio = cli ? {...cli} : null;
+  const copiasPrevias = cli ? VENTAS.filter(x=>x.clienteId===cli.id).map(x=>({v:x, cliente:x.cliente, provincia:x.provincia, localidad:x.localidad})) : [];
   const ok = _guardarEdicionVenta(nro);   // actualiza memoria + audita + cierra modal
   if(!ok) return false;
   const v = VENTAS.find(x=>x.nro===nro); if(!v) return true;
+  const cambioCliente = cli && EDIT_CAMPOS_CLIENTE.some(([k])=>(cli[k]||'')!==(cliPrevio[k]||''));
   (async()=>{
+    /* 1) Datos del cliente. Va aparte de la venta: si uno de los dos falla,
+          el otro se guarda igual y el cartel dice cuál no entró. */
+    if(cambioCliente){
+      let fichaOk = false;
+      try{ await persistirCliente(cli); fichaOk = true; }
+      catch(ex){
+        Object.assign(cli, cliPrevio);
+        copiasPrevias.forEach(p=>Object.assign(p.v, {cliente:p.cliente, provincia:p.provincia, localidad:p.localidad}));
+        renderTablaVentas();
+        toast("⚠️ No se pudieron guardar los datos del cliente: "+(ex.message||ex));
+      }
+      if(fichaOk){
+        try{ await copiarClienteEnVentas(cli); respaldarVentasDelCliente(cli.id, nro); }
+        catch(ex){ toast("⚠️ El cliente se guardó, pero no se actualizó en sus ventas: "+(ex.message||ex)); }
+      }
+    }
+    /* 2) La venta. */
     try{
-      const r1=await SB.from('ventas').update({total:v.total, iva:v.iva, factura:v.factura, saldo:v.saldo, nota:v.nota}).eq('id',nro).select('id');
+      const r1=await SB.from('ventas').update({total:v.total, iva:v.iva, factura:v.factura, saldo:v.saldo, nota:v.nota, entrega:v.entrega||null}).eq('id',nro).select('id');
       if(r1.error) throw r1.error;
       if(!r1.data || !r1.data.length) throw new Error("no tenés permiso para editar esta venta");
       /* Primero insertamos los ítems nuevos y recién después borramos los viejos:
@@ -258,13 +281,38 @@ window.guardarEdicionVenta = function(nro){
       if(nuevos.length){ const r3=await SB.from('pagos').insert(nuevos.map(pp=>({venta_id:nro,monto:pp.monto,metodo:pp.metodo,fecha:pp.fecha,usuario:pp.usuario}))); if(r3.error) throw r3.error; }
       respaldarEnSheet(nro);
     }catch(ex){
-      /* No se guardó: dejamos la venta como estaba para que la pantalla no mienta. */
-      if(copiaPrevia){ Object.assign(v, copiaPrevia); renderTablaVentas(); }
+      /* No se guardó: dejamos la venta como estaba para que la pantalla no mienta.
+         El nombre y la localidad del cliente quedan como los dejó el paso 1. */
+      if(copiaPrevia){
+        const {cliente, provincia, localidad} = v;
+        Object.assign(v, copiaPrevia, {cliente, provincia, localidad});
+        renderTablaVentas();
+      }
       toast("⚠️ No se pudo guardar la venta #"+nro+": "+(ex.message||ex));
     }
   })();
   return true;
 };
+
+/* Guarda la ficha del cliente. */
+async function persistirCliente(c){
+  const r=await SB.from('clientes').update({nombre:c.nombre, apellido:c.apellido||'', dni:c.dni||'', telefono:c.tel||'', email:c.mail||'',
+    provincia:c.provincia||'', localidad:c.localidad||'', domicilio:c.domicilio||''}).eq('id',c.id).select('id');
+  if(r.error) throw r.error;
+  if(!r.data || !r.data.length) throw new Error("no tenés permiso para editar este cliente");
+}
+/* Actualiza la copia del nombre y la localidad del cliente en todas sus ventas
+   (ventas.cliente_nombre es lo que muestra la lista). Un vendedor solo puede
+   tocar sus propias ventas: las ajenas las saltea la base sin dar error. */
+async function copiarClienteEnVentas(c){
+  const r=await SB.from('ventas').update({cliente_nombre:nombreClienteVenta(c), provincia:c.provincia||'', localidad:localidadClienteVenta(c)}).eq('cliente_id',c.id);
+  if(r.error) throw r.error;
+}
+/* Copia en la planilla de las ventas del cliente (menos la que se está
+   editando, que se respalda sola cuando termina de guardarse). */
+function respaldarVentasDelCliente(id, excepto){
+  VENTAS.filter(x=>x.clienteId===id && x.nro!==excepto).forEach(x=>respaldarEnSheet(x.nro));
+}
 
 /* ---- Copia de seguridad en la planilla de Google ----
    Se dispara sola cada vez que una venta se crea, se edita, se cobra o se
@@ -394,6 +442,8 @@ async function _guardarClienteReal(){
   const soloNumeros = t => String(t||'').replace(/\D/g,'');
   const dniNuevo = soloNumeros(datos.dni);
   if(dniNuevo){
+    /* El vendedor no tiene todos los clientes en memoria: le preguntamos a la base. */
+    if(restringeVentas() && !CLIENTES.some(x => x.id!==editId && soloNumeros(x.dni)===dniNuevo)) await buscarClientePorDni(dniNuevo);
     const repetido = CLIENTES.find(x => x.id!==editId && soloNumeros(x.dni)===dniNuevo);
     if(repetido){
       campos.dni.classList.add("err"); campos.dni.focus();
@@ -406,9 +456,19 @@ async function _guardarClienteReal(){
     }
   }
   if(editId!=null){
-    const r=await SB.from('clientes').update(fila).eq('id',editId); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
+    const r=await SB.from('clientes').update(fila).eq('id',editId).select('id'); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
+    /* Si la base no tocó ninguna fila es por permisos (un vendedor con un
+       cliente que cargó otro): avisamos en vez de decir "guardado". */
+    if(!r.data || !r.data.length){ toast("⚠️ Este cliente lo cargó otra persona y no podés modificar sus datos. Seguí con la venta y pedile al administrador que los corrija."); return; }
     if(modalModo==="venta" && clienteActual) Object.assign(clienteActual,datos);
     const reg=CLIENTES.find(x=>x.id===editId); if(reg) Object.assign(reg,{nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio});
+    /* Sin esto, la lista de Ventas seguía mostrando el nombre y la localidad viejos. */
+    if(reg && VENTAS.some(x=>x.clienteId===editId)){
+      aplicarClienteEnVentas(reg);
+      copiarClienteEnVentas(reg)
+        .then(()=>respaldarVentasDelCliente(editId))
+        .catch(ex=>toast("⚠️ El cliente se guardó, pero no se actualizó en sus ventas: "+(ex.message||ex)));
+    }
   } else {
     const {data,error}=await SB.from('clientes').insert(fila).select().single(); if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return; }
     const id=data.id;
@@ -418,6 +478,55 @@ async function _guardarClienteReal(){
   cerrarModal();
   if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); } else { viewClientes(); toast("✅ Cliente guardado"); }
 }
+
+/* ---- ¿Ese DNI ya está cargado? (vendedores) ----
+   El vendedor solo tiene en memoria los clientes de las ventas que ve, así que
+   el aviso de DNI repetido se lo pregunta a la base (aura_cliente_por_dni).
+   Si lo encuentra, suma esa ficha a CLIENTES para que "Usar este cliente"
+   funcione igual que siempre. */
+async function buscarClientePorDni(dni){
+  try{
+    const {data,error}=await SB.rpc('aura_cliente_por_dni',{p_dni:dni});
+    if(error || !data || !data.length) return null;
+    const r=data[0];
+    let c=CLIENTES.find(x=>x.id===r.id);
+    if(!c){
+      c={id:r.id,nombre:r.nombre,apellido:r.apellido||'',dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,domicilio:r.domicilio||'',saldo:0,activo:true};
+      CLIENTES.push(c);
+    }
+    return c;
+  }catch(_){ return null; }
+}
+const _chequearDniExistente = window.chequearDniExistente;
+const _dniConsultados = new Set();
+window.chequearDniExistente = function(){
+  _chequearDniExistente();
+  if(!restringeVentas()) return;            // los demás roles ya tienen todos los clientes
+  const dniDe = () => String(($("#cDni")||{}).value||'').replace(/\D/g,'');
+  const dni = dniDe();
+  if(dni.length<7 || _dniConsultados.has(dni) || ($("#cliExiste")||{}).innerHTML) return;
+  _dniConsultados.add(dni);
+  buscarClientePorDni(dni).then(c=>{ if(c && dniDe()===dni) _chequearDniExistente(); });
+};
+
+/* ---- Equipo de ventas ----
+   Para el vendedor, las cantidades salen de la base (aura_ranking): en su
+   computadora solo están sus ventas y las de la última semana. Si la función
+   todavía no existe (no se corrió la migración), la base le sigue mandando
+   todas las ventas y se cuentan en memoria como siempre. */
+const _viewRanking = window.viewRanking;
+window.viewRanking = async function(){
+  RANKING_REMOTO = null;
+  if(restringeVentas()){
+    const hoy = new Date();
+    try{
+      const {data,error} = await SB.rpc('aura_ranking',{p_anio:hoy.getFullYear(), p_mes:hoy.getMonth()+1});
+      if(!error && Array.isArray(data)) RANKING_REMOTO = data;
+    }catch(_){}
+    if(vistaActual!=='ranking') return;     // se fue a otra pestaña mientras esperaba
+  }
+  _viewRanking();
+};
 
 /* ---- Guardado: PRODUCTO (alta/edición, con costo y descuento de stock) ---- */
 window.guardarProducto = async function(id){
@@ -759,123 +868,4 @@ window.confirmarRendicion = function(){
       try{ await cargarTodo(); viewChoferes(); }catch(_){}
     }
   });
-};
-
-/* ====== SISTEMA VIEJO: importar, borrar =====================================
-   Las ventas heredadas se guardan en la misma tabla pero con origen='viejo'.
-   Esa marca es la que las mantiene fuera de los reportes y del ranking, y la
-   que permite borrarlas todas juntas el día que se terminen de entregar.
-   Acá NUNCA se manda mail ni se descuenta stock: son ventas viejas, el cliente
-   ya recibió su comprobante y esa mercadería ya salió del galpón. */
-
-window.confirmarImportarViejo = function(){
-  return unSoloGuardado('importarViejo', '#btnImportarViejo', async function(){
-    if(!impFilas.length){ toast("⚠️ No hay nada para importar"); return; }
-    let creadas=0, fallidas=0;
-    const btn = $("#btnImportarViejo");
-    try{
-      for(let i=0;i<impFilas.length;i++){
-        const r = impFilas[i];
-        if(btn) btn.textContent = `Importando ${i+1} de ${impFilas.length}…`;
-        try{
-          /* 1) El cliente: si el DNI ya está cargado reusamos esa ficha,
-                así no se duplican los que ya existen en el sistema nuevo. */
-          const soloNum = t => String(t==null?'':t).replace(/\D/g,'');
-          let cli = r.dni ? CLIENTES.find(x=>soloNum(x.dni) && soloNum(x.dni)===soloNum(r.dni)) : null;
-          if(!cli){
-            const fila = {nombre:r.cliente, apellido:r.apellido||'', dni:r.dni||'',
-                          telefono:r.tel||'', email:r.mail||'', provincia:r.provincia||'',
-                          localidad:r.localidad||''};
-            const ins = await SB.from('clientes').insert(fila).select().single();
-            if(ins.error) throw ins.error;
-            cli = {id:ins.data.id, nombre:fila.nombre, apellido:fila.apellido, dni:fila.dni,
-                   tel:fila.telefono, mail:fila.email, provincia:fila.provincia,
-                   localidad:fila.localidad, domicilio:'', saldo:0, activo:true};
-            CLIENTES.push(cli);
-          }
-
-          /* 2) La venta, marcada como heredada. */
-          const total = Number(r.total||0) || Number(r.saldo||0);
-          const venta = {
-            cliente_id: cli.id,
-            cliente_nombre: `${r.cliente} ${r.apellido||''}`.trim(),
-            vendedor: r.vendedor || 'Sistema viejo',
-            fecha: hoyISO(), entrega: r.entrega || null,
-            total, iva: 0, factura: false, saldo: Number(r.saldo||0),
-            estado: 'Procesando pedido',
-            provincia: r.provincia || '', localidad: r.localidad || '',
-            nota: 'Venta heredada del sistema anterior',
-            origen: 'viejo'
-          };
-          const vIns = await SB.from('ventas').insert(venta).select().single();
-          if(vIns.error) throw vIns.error;
-          const nro = vIns.data.id;
-
-          /* 3) Lo que lleva. Viene como texto ("Minipiscina 370 + Luz Led"),
-                así que lo partimos y le ponemos precio 0 salvo al primero:
-                acá no interesa el detalle comercial, solo qué hay que entregar. */
-          const nombres = String(r.productos||'').split(/\s*[+;,\/]\s*|\s{2,}/).map(x=>x.trim()).filter(Boolean);
-          const items = (nombres.length?nombres:['(sin detalle)']).map((n,idx)=>({
-            venta_id:nro, nombre:n, precio: idx===0?total:0, cantidad:1,
-            categoria: /minipiscina|pileta/i.test(n) ? 'Minipiscinas' : null
-          }));
-          const iIns = await SB.from('venta_items').insert(items);
-          if(iIns.error) throw iIns.error;
-
-          /* 4) En memoria, para verlo sin recargar. */
-          VENTAS.unshift({nro, cliente:venta.cliente_nombre, localidad:venta.localidad,
-            provincia:venta.provincia, total, iva:0, factura:false, saldo:venta.saldo,
-            estado:venta.estado, vendedor:venta.vendedor, fecha:venta.fecha,
-            entrega:venta.entrega||'', clienteId:cli.id, cancelada:false, nota:venta.nota,
-            origen:'viejo', chofer:null,
-            items: items.map(i=>({nombre:i.nombre, precio:i.precio, cant:i.cantidad, categoria:i.categoria})),
-            pagos: []});
-          creadas++;
-        }catch(exFila){ fallidas++; console.warn('Importando fila', i+1, exFila); }
-      }
-      auditar("Importación del sistema viejo","venta","", `${creadas} venta(s) importada(s)${fallidas?` · ${fallidas} con error`:''}`);
-      cerrarModal(); viewSistemaViejo();
-      toast(fallidas ? `✅ ${creadas} importadas · ⚠️ ${fallidas} con error (ver consola)`
-                     : `✅ ${creadas} venta${creadas===1?'':'s'} del sistema viejo importada${creadas===1?'':'s'}`);
-    }catch(ex){
-      toast("⚠️ Se cortó la importación: "+(ex.message||ex));
-      try{ await cargarTodo(); viewSistemaViejo(); }catch(_){}
-    }
-  });
-};
-
-/* Borrar TODAS las heredadas. Solo toca las que tienen origen='viejo': las del
-   sistema nuevo no se pueden borrar desde acá ni por error. */
-window.confirmarBorrarViejo = function(){
-  return unSoloGuardado('borrarViejo', '#btnBorrarViejo', async function(){
-    const ids = VENTAS.filter(v=>esVentaVieja(v)).map(v=>v.nro);
-    if(!ids.length){ toast("No hay ventas heredadas"); return; }
-    try{
-      const r = await SB.from('ventas').delete().eq('origen','viejo').select('id');
-      if(r.error) throw r.error;
-      if(!r.data || !r.data.length) throw new Error("no tenés permiso para borrarlas");
-      for(let i=VENTAS.length-1;i>=0;i--) if(esVentaVieja(VENTAS[i])) VENTAS.splice(i,1);
-      auditar("Sistema viejo borrado","venta","", `${r.data.length} venta(s) heredada(s) eliminada(s)`);
-      cerrarModal(); viewSistemaViejo();
-      toast(`✅ ${r.data.length} venta(s) heredada(s) borradas`);
-    }catch(ex){
-      toast("⚠️ No se pudieron borrar: "+(ex.message||ex));
-      try{ await cargarTodo(); viewSistemaViejo(); }catch(_){}
-    }
-  });
-};
-
-/* Borrar una sola venta heredada. */
-window.borrarVentaVieja = async function(nro){
-  const v = VENTAS.find(x=>x.nro===nro);
-  if(!v || !esVentaVieja(v)){ toast("Esa venta no es del sistema viejo"); return; }
-  if(!confirm(`¿Borrar la venta heredada #${nro} de ${v.cliente}?`)) return;
-  try{
-    const r = await SB.from('ventas').delete().eq('id',nro).eq('origen','viejo').select('id');
-    if(r.error) throw r.error;
-    if(!r.data || !r.data.length) throw new Error("no tenés permiso");
-    const i = VENTAS.findIndex(x=>x.nro===nro); if(i>=0) VENTAS.splice(i,1);
-    auditar("Venta heredada borrada","venta",nro,v.cliente);
-    viewSistemaViejo(); toast(`✅ Venta #${nro} borrada`);
-  }catch(ex){ toast("⚠️ No se pudo borrar: "+(ex.message||ex)); }
 };
