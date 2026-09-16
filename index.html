@@ -81,6 +81,13 @@
   tr.cancelada{background:#fef2f2;color:var(--rojo)}
   tr.cancelada td{color:var(--rojo)}
   tr.inactivo{opacity:.5}
+  /* Clientes: compras de cada cliente */
+  .cli-compra{min-width:210px;max-width:280px;padding:2px 0;line-height:1.35}
+  .cli-compra + .cli-compra{border-top:1px dashed var(--linea);margin-top:6px;padding-top:8px}
+  .cli-compra .cab{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .cli-compra .cab .btn{padding:2px 6px;margin-left:auto}
+  .cli-compra .que{font-weight:600;margin:1px 0}
+  .cli-compra.canc .que{text-decoration:line-through;opacity:.7}
   /* Termómetro */
   .termo{position:relative;width:48px;height:210px;background:#eef2f7;border:2px solid #cbd5e1;border-radius:24px;overflow:hidden;flex-shrink:0}
   .termo-fill{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(#5a917d,#3f6f5e);transition:height .45s ease}
@@ -755,6 +762,7 @@ function abrirModalCliente(modo, id){
               <div class="help">📧 A este correo se enviará el remito con el detalle de la venta cargada.</div>
             </div>
           </div>
+          ${(modalModo==="clientes" && editando) ? htmlEntregasCliente(c) : ''}
         </div>
         <div class="foot">
           <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
@@ -2333,6 +2341,52 @@ function editAplicarStockDelta(){
     if(p && p.descStock && !isNaN(+p.stock)){ p.stock=String(Math.max(0,(+p.stock)-delta)); if(window.persistirStock) window.persistirStock(p); }
   });
 }
+/* Validación de una fecha de entrega cambiada (desde la venta o desde la ficha
+   del cliente). Devuelve null si está bien o si no cambió. */
+function errorNuevaEntrega(v, nueva){
+  if(nueva===(v.entrega||"")) return null;
+  if(!nueva) return "⚠️ La fecha de entrega no puede quedar vacía";
+  if(v.fecha && nueva<v.fecha) return "⚠️ La entrega no puede ser anterior a la fecha de la venta ("+fmtFechaCorta(v.fecha)+")";
+  return null;
+}
+
+/* Fechas de entrega en la ficha del cliente (Clientes → ✏️). La entrega es de
+   cada venta, no del cliente, pero es ahí donde se la va a buscar cuando el
+   cliente llama para reprogramar. */
+function htmlEntregasCliente(c){
+  const ventas=VENTAS.filter(v=>v.clienteId===c.id && !v.cancelada && !esVentaVieja(v) && ventaVisible(v));
+  if(!ventas.length) return "";
+  return `
+          <h4 style="margin:18px 0 4px;color:#374151">🚚 Fecha de entrega</h4>
+          ${ventas.map(v=>{
+            const edita=puedeEditarVenta(v);
+            const que=(v.items||[]).filter(i=>Number(i.precio)!==0).map(i=>i.nombre).join(" + ")||"—";
+            return `<div class="row" style="align-items:center;margin-top:8px;flex-wrap:wrap">
+              <div style="flex:1 1 140px;min-width:0;line-height:1.35"><b>Venta #${v.nro}</b> <span class="legend">· vendida el ${fmtFechaCorta(v.fecha)}</span><br><span class="legend">${esc(que)}</span></div>
+              <input type="date" class="cli-ent" data-nro="${v.nro}" value="${esc(v.entrega||'')}" min="${esc(v.fecha||'')}" style="flex:0 0 165px;width:165px" ${edita?'':'disabled'}>
+              ${edita?`<button class="btn btn-ghost btn-sm" title="Editar productos, notas y pagos de esta venta (los cambios de esta ficha sin guardar se pierden)" onclick="abrirEditarVenta(${v.nro})">✏️ Venta</button>`:''}
+            </div>`;
+          }).join("")}`;
+}
+/* Lee las entregas cambiadas en la ficha. Devuelve {cambios:[{v,antes,nueva}]} o {error}. */
+function entregasEditadasCliente(){
+  const cambios=[];
+  for(const el of document.querySelectorAll(".cli-ent")){
+    el.classList.remove("err");
+    if(el.disabled) continue;
+    const v=VENTAS.find(x=>x.nro===+el.dataset.nro); if(!v) continue;
+    const nueva=(el.value||"").trim();
+    const err=errorNuevaEntrega(v, nueva);
+    if(err){ el.classList.add("err"); el.focus(); return {error:`⚠️ Venta #${v.nro}: ${err.replace("⚠️ ","")}`}; }
+    if(nueva!==(v.entrega||"")) cambios.push({v, antes:v.entrega||"", nueva});
+  }
+  return {cambios};
+}
+function aplicarEntregaVenta(ch){
+  ch.v.entrega=ch.nueva;
+  auditar("Venta modificada","venta",ch.v.nro,`entrega ${fmtFechaCorta(ch.antes)} → ${fmtFechaCorta(ch.nueva)} (desde la ficha del cliente)`);
+}
+
 /* Lee los datos del cliente del formulario. Devuelve null si la venta no tiene
    ficha, o {c, datos, cambiados, error}. Al editar se exige solo el nombre:
    las fichas más viejas no siempre tienen email o
@@ -2363,10 +2417,8 @@ function guardarEdicionVenta(nro){
      reprograma, la fecha que vale es la que se acordó con él. */
   const entregaPrev=v.entrega||"";
   const entrega=($("#edEntrega")?.value||"").trim();
-  if(entrega!==entregaPrev){
-    if(!entrega){ toast("⚠️ La fecha de entrega no puede quedar vacía"); $("#edEntrega")?.focus(); return false; }
-    if(v.fecha && entrega<v.fecha){ toast("⚠️ La entrega no puede ser anterior a la fecha de la venta ("+fmtFechaCorta(v.fecha)+")"); $("#edEntrega")?.focus(); return false; }
-  }
+  const errEnt=errorNuevaEntrega(v, entrega);
+  if(errEnt){ toast(errEnt); $("#edEntrega")?.focus(); return false; }
   const cli=editLeerCliente(v);
   if(cli && cli.error){ toast(cli.error); return false; }
   const t=editTotales(); const nota=($("#edNota")?.value||"").trim();
@@ -2396,7 +2448,7 @@ function guardarEdicionVenta(nro){
   v.pagos=pagosBase.concat(editDraft.nuevosPagos);
   if(cli && cli.cambiados.length){ Object.assign(cli.c, cli.datos); aplicarClienteEnVentas(cli.c); }
   auditar("Venta modificada","venta",nro,cambios.length?cambios.join(", "):"sin cambios relevantes");
-  cerrarModal(); renderTablaVentas(); toast(`✅ Venta #${nro} actualizada`);
+  cerrarModal(); renderTablaVentas(); renderCliTabla(); toast(`✅ Venta #${nro} actualizada`);
   return true;
 }
 
@@ -2842,13 +2894,52 @@ async function exportarRutaExcel(){
 }
 
 /* ====== CLIENTES ====== */
-function cliFiltrados(){
+/* Ventas de cada cliente, la más nueva primero: Map id cliente → [ventas].
+   Se arma una vez por dibujo de la tabla en vez de recorrer VENTAS por fila. */
+function ventasPorCliente(){
+  const m=new Map();
+  VENTAS.forEach(v=>{
+    if(v.clienteId==null || esVentaVieja(v) || !ventaVisible(v)) return;
+    if(!m.has(v.clienteId)) m.set(v.clienteId, []);
+    m.get(v.clienteId).push(v);
+  });
+  m.forEach(l=>l.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'') || b.nro-a.nro));
+  return m;
+}
+/* Lo que se cobró en cada venta (sin los bonificados, salvo que no haya otra cosa). */
+function resumenProductos(v){
+  const items=v.items||[];
+  const cobrados=items.filter(i=>Number(i.precio)!==0);
+  return (cobrados.length?cobrados:items).map(i=>(+i.cant>1?`${i.cant}× `:'')+i.nombre).join(' + ');
+}
+/* El saldo del cliente es lo que falta cobrar de sus ventas no canceladas.
+   (clientes.saldo de la base nunca se actualiza: no sirve para esto.) */
+function saldoCliente(ventas){ return (ventas||[]).reduce((a,v)=>a+(v.cancelada?0:Number(v.saldo||0)),0); }
+function htmlComprasCliente(ventas){
+  if(!ventas || !ventas.length) return `<span class="legend">Sin compras</span>`;
+  return ventas.map(v=>{
+    const ec=v.cancelada?COLORES.rojo:estColor(v.estado);
+    return `<div class="cli-compra${v.cancelada?' canc':''}">
+      <div class="cab"><b>Venta #${v.nro}</b><span class="legend">${fmtFechaCorta(v.fecha)}</span>
+        <button class="btn btn-ghost btn-sm" title="Ver orden completa" onclick="abrirOrden(${v.nro})">👁️</button></div>
+      <div class="que">${esc(resumenProductos(v)||'—')}</div>
+      <div class="legend">${money(granTotal(v))} · entrega ${fmtFechaCorta(v.entrega)}</div>
+      <span class="cont" style="background:${ec.bg};color:${ec.fg}">${v.cancelada?'Cancelada':esc(v.estado)}</span>
+    </div>`;
+  }).join('');
+}
+function cliFiltrados(porCliente){
   const q=(cliQuery||'').trim().toLowerCase();
+  porCliente = porCliente || ventasPorCliente();
   return CLIENTES.filter(c=>{
     if(cliProv && (c.provincia||'')!==cliProv) return false;
     if(cliEstado==='activo' && c.activo===false) return false;
     if(cliEstado==='inactivo' && c.activo!==false) return false;
-    if(q && !coincideBusqueda((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')+' '+(c.provincia||'')+' '+(c.domicilio||''), q)) return false;
+    if(q){
+      /* También se busca por número de venta o por lo que compró. */
+      const compras=(porCliente.get(c.id)||[]).map(v=>v.nro+' '+(v.items||[]).map(i=>i.nombre).join(' ')).join(' ');
+      if(!coincideBusqueda((c.nombre||'')+' '+(c.apellido||'')+' '+(c.dni||'')+' '+(c.tel||'')+' '+(c.mail||'')+' '+(c.localidad||'')+' '+(c.provincia||'')+' '+(c.domicilio||'')+' '+compras, q)) return false;
+    }
     return true;
   });
 }
@@ -2861,7 +2952,7 @@ function viewClientes(){
       <div class="toolbar">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <span class="legend" id="cliCount"></span>
-          <input class="search" placeholder="🔍 Nombre, DNI, teléfono, email, localidad…" value="${esc(cliQuery)}" oninput="cliQuery=this.value;renderCliTabla()">
+          <input class="search" placeholder="🔍 Nombre, DNI, teléfono, localidad, N° de venta, pileta…" value="${esc(cliQuery)}" oninput="cliQuery=this.value;renderCliTabla()">
           <select style="max-width:190px" onchange="cliProv=this.value;renderCliTabla()"><option value="">Todas las provincias</option>${provincias.map(p=>`<option ${cliProv===p?'selected':''}>${esc(p)}</option>`).join("")}</select>
           <select style="max-width:160px" onchange="cliEstado=this.value;renderCliTabla()"><option value="" ${cliEstado===''?'selected':''}>Todos</option><option value="activo" ${cliEstado==='activo'?'selected':''}>Solo activos</option><option value="inactivo" ${cliEstado==='inactivo'?'selected':''}>Solo inactivos</option></select>
         </div>
@@ -2869,7 +2960,7 @@ function viewClientes(){
       </div>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Saldo</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
+        <thead><tr><th>Nombre</th><th>DNI</th><th>Teléfono</th><th>Correo</th><th>Localidad</th><th>Provincia</th><th>Compra</th><th>Saldo</th><th>Estado</th>${gestor?'<th>Acciones</th>':''}</tr></thead>
         <tbody id="tCli"></tbody>
       </table>
       </div>
@@ -2878,8 +2969,13 @@ function viewClientes(){
 }
 function renderCliTabla(){
   const tb=$("#tCli"); if(!tb) return; const gestor=puede('gestionar_clientes');
-  const rows=cliFiltrados(); const cnt=$("#cliCount"); if(cnt) cnt.textContent=`${rows.length} de ${CLIENTES.length}`;
-  tb.innerHTML=rows.length?rows.map(c=>`<tr class="${c.activo===false?'inactivo':''}"><td><b>${esc(c.nombre)} ${esc(c.apellido)}</b></td><td>${esc(c.dni||'—')}</td><td>${esc(c.tel||'—')}</td><td>${esc(c.mail||'—')}</td><td>${esc(c.localidad||'—')}</td><td>${esc(c.provincia||'—')}</td><td><b>${money(c.saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`).join(""):`<tr><td colspan="${gestor?9:8}" class="empty">Sin clientes con estos filtros.</td></tr>`;
+  const porCliente=ventasPorCliente();
+  const rows=cliFiltrados(porCliente); const cnt=$("#cliCount"); if(cnt) cnt.textContent=`${rows.length} de ${CLIENTES.length}`;
+  tb.innerHTML=rows.length?rows.map(c=>{
+    const ventas=porCliente.get(c.id)||[];
+    const saldo=saldoCliente(ventas);
+    return `<tr class="${c.activo===false?'inactivo':''}"><td><b>${esc(c.nombre)} ${esc(c.apellido)}</b></td><td>${esc(c.dni||'—')}</td><td>${esc(c.tel||'—')}</td><td>${esc(c.mail||'—')}</td><td>${esc(c.localidad||'—')}</td><td>${esc(c.provincia||'—')}</td><td>${htmlComprasCliente(ventas)}</td><td style="white-space:nowrap"><b style="color:${saldo>0?'var(--rojo)':'inherit'}">${money(saldo)}</b></td><td>${c.activo===false?'<span class="badge b-pend">Inactivo</span>':'<span class="badge b-ent">Activo</span>'}</td>${gestor?`<td class="acts"><button class="btn btn-ghost btn-sm" title="Editar" onclick="abrirModalCliente('clientes',${c.id})">✏️</button> <button class="btn btn-ghost btn-sm" title="${c.activo===false?'Activar':'Inactivar'}" onclick="toggleCliente(${c.id})">${c.activo===false?'⚪':'🟢'}</button></td>`:''}</tr>`;
+  }).join(""):`<tr><td colspan="${gestor?10:9}" class="empty">Sin clientes con estos filtros.</td></tr>`;
 }
 function toggleCliente(id){
   if(!puede('gestionar_clientes')){ toast("No tenés permiso"); return; }

@@ -254,7 +254,7 @@ window.guardarEdicionVenta = function(nro){
       catch(ex){
         Object.assign(cli, cliPrevio);
         copiasPrevias.forEach(p=>Object.assign(p.v, {cliente:p.cliente, provincia:p.provincia, localidad:p.localidad}));
-        renderTablaVentas();
+        renderTablaVentas(); renderCliTabla();
         toast("⚠️ No se pudieron guardar los datos del cliente: "+(ex.message||ex));
       }
       if(fichaOk){
@@ -286,7 +286,7 @@ window.guardarEdicionVenta = function(nro){
       if(copiaPrevia){
         const {cliente, provincia, localidad} = v;
         Object.assign(v, copiaPrevia, {cliente, provincia, localidad});
-        renderTablaVentas();
+        renderTablaVentas(); renderCliTabla();
       }
       toast("⚠️ No se pudo guardar la venta #"+nro+": "+(ex.message||ex));
     }
@@ -455,6 +455,11 @@ async function _guardarClienteReal(){
       return;
     }
   }
+  /* Fechas de entrega cambiadas en la ficha (solo al editar desde Clientes).
+     Se validan antes de escribir nada. */
+  const ent = (editId!=null && modalModo==="clientes") ? entregasEditadasCliente() : {cambios:[]};
+  if(ent.error){ toast(ent.error); return; }
+  const entregasMal = [];
   if(editId!=null){
     const r=await SB.from('clientes').update(fila).eq('id',editId).select('id'); if(r.error){ toast("⚠️ Error: "+r.error.message); return; }
     /* Si la base no tocó ninguna fila es por permisos (un vendedor con un
@@ -462,6 +467,12 @@ async function _guardarClienteReal(){
     if(!r.data || !r.data.length){ toast("⚠️ Este cliente lo cargó otra persona y no podés modificar sus datos. Seguí con la venta y pedile al administrador que los corrija."); return; }
     if(modalModo==="venta" && clienteActual) Object.assign(clienteActual,datos);
     const reg=CLIENTES.find(x=>x.id===editId); if(reg) Object.assign(reg,{nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio});
+    /* Las entregas van antes de la copia a las ventas: esa copia es la que
+       dispara el respaldo en la planilla, y tiene que salir con la fecha nueva. */
+    for(const ch of ent.cambios){
+      if(await guardarCampo('ventas', ch.v.nro, {entrega:ch.nueva}, "la entrega de la venta #"+ch.v.nro)) aplicarEntregaVenta(ch);
+      else entregasMal.push(ch.v.nro);
+    }
     /* Sin esto, la lista de Ventas seguía mostrando el nombre y la localidad viejos. */
     if(reg && VENTAS.some(x=>x.clienteId===editId)){
       aplicarClienteEnVentas(reg);
@@ -476,7 +487,10 @@ async function _guardarClienteReal(){
     if(modalModo==="venta") clienteActual={id,...datos};
   }
   cerrarModal();
-  if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); } else { viewClientes(); toast("✅ Cliente guardado"); }
+  if(modalModo==="venta"){ renderClienteBox(); toast("✅ Cliente guardado"); return; }
+  viewClientes();
+  if(entregasMal.length) toast(`⚠️ El cliente se guardó, pero NO se pudo cambiar la entrega de la venta #${entregasMal.join(", #")}`);
+  else toast(ent.cambios.length ? "✅ Cliente y fecha de entrega guardados" : "✅ Cliente guardado");
 }
 
 /* ---- ¿Ese DNI ya está cargado? (vendedores) ----
