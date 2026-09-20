@@ -65,10 +65,11 @@ async function cargarTodo(){
 
   /* Tablas nuevas (resilientes: si todavía no corriste la migración SQL,
      no rompen el login; simplemente quedan vacías / con permisos por defecto). */
-  let pagosData=[], audData=[], permData=[];
+  let pagosData=[], audData=[], permData=[], ajustesData=[];
   try{ const r=await SB.from('pagos').select('*'); if(!r.error) pagosData=r.data||[]; }catch(_){}
   try{ const r=await SB.from('auditoria').select('*').order('creado',{ascending:false}).limit(1000); if(!r.error) audData=r.data||[]; }catch(_){}
   try{ const r=await SB.from('permisos').select('*'); if(!r.error) permData=r.data||[]; }catch(_){}
+  try{ const r=await SB.from('ajustes').select('*'); if(!r.error) ajustesData=r.data||[]; }catch(_){}
 
   PRODUCTOS.length=0; (p.data||[]).forEach(r=>PRODUCTOS.push({id:r.id,nombre:r.nombre,desc:r.descripcion||'',cat:r.categoria,precio:Number(r.precio),costo:Number(r.costo||0),stock:r.stock,descStock:r.descuenta_stock===true,activo:r.activo!==false}));
   CLIENTES.length=0; (c.data||[]).forEach(r=>CLIENTES.push({id:r.id,nombre:r.nombre,apellido:r.apellido,dni:r.dni,tel:r.telefono,mail:r.email,provincia:r.provincia,localidad:r.localidad,domicilio:r.domicilio||'',saldo:Number(r.saldo||0),activo:r.activo!==false}));
@@ -83,6 +84,14 @@ async function cargarTodo(){
   /* Permisos: arrancar de los valores por defecto y sobreescribir con lo guardado en la base. */
   PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
   permData.forEach(r=>{ if(!PERMISOS[r.rol]) PERMISOS[r.rol]={}; PERMISOS[r.rol][r.permiso]=r.permitido?1:0; });
+  /* Bonificación vigente (cartel de Vender). Si la tabla `ajustes` todavía no
+     existe, quedan los valores de fábrica que trae index.html. */
+  const promoGuardada = ajustesData.find(r=>r.clave==='promo_bonificacion');
+  if(promoGuardada && promoGuardada.valor){
+    const v=promoGuardada.valor;
+    PROMO = {activa:v.activa!==false, hasta:v.hasta||'', texto:v.texto||'',
+             productos:Array.isArray(v.productos)?v.productos.map(Number):[]};
+  }
   /* Marca de cuándo se trajeron: es lo que muestra el botón 🔄 de la barra. */
   marcarDatosCargados();
 }
@@ -242,9 +251,15 @@ async function _confirmarVentaReal(){
   VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
   /* La auditoría registra quién la cargó (nombreUsuario) y, si es histórica,
      a quién se le atribuyó y con qué fecha. */
+  /* Qué se regaló en esta venta y si estaba autorizado: es lo que después
+     permite ver quién bonifica de más. */
+  const bonificados = carrito.filter(i=>{ const p=PRODUCTOS.find(x=>x.id===i.id); return esBonificacion(p||i); });
+  const detalleBonif = bonificados.length
+    ? ` · bonificó: ${bonificados.map(i=>{ const p=PRODUCTOS.find(x=>x.id===i.id)||i; return `${i.cant}× ${i.nombre}${bonificacionPermitida(p)?'':' (SIN AUTORIZAR)'}`; }).join(', ')}`
+    : '';
   auditar(carga.historica?"Venta cargada (histórica)":"Venta creada","venta",nro,
     `Cliente ${c.nombre} ${c.apellido} · Total ${money(gran)}${ventaFactura?' (c/IVA)':''}`+
-    (carga.historica?` · fecha ${fmtFechaCorta(carga.fecha)} · vendedor ${carga.vendedor}`:''));
+    (carga.historica?` · fecha ${fmtFechaCorta(carga.fecha)} · vendedor ${carga.vendedor}`:'')+detalleBonif);
   toast(`✅ Venta #${nro} guardada`+(carga.historica?` · ${fmtFechaCorta(carga.fecha)} · ${carga.vendedor}`:'')+(remito&&c.mail?` · enviando remito…`:""));
   respaldarEnSheet(nro);
   nav("ventas");
@@ -517,6 +532,22 @@ async function _guardarClienteReal(){
   if(entregasMal.length) toast(`⚠️ El cliente se guardó, pero NO se pudo cambiar la entrega de la venta #${entregasMal.join(", #")}`);
   else toast(ent.cambios.length ? "✅ Cliente y fecha de entrega guardados" : "✅ Cliente guardado");
 }
+
+/* ---- Guardado: AVISO DE BONIFICACIÓN (tabla `ajustes`) ---- */
+const _guardarPromo = window.guardarPromo;
+window.guardarPromo = function(){
+  const ok = _guardarPromo();                 // valida, actualiza memoria, audita y cierra
+  if(!ok) return false;
+  const valor = {activa:PROMO.activa, hasta:PROMO.hasta, texto:PROMO.texto, productos:PROMO.productos};
+  SB.from('ajustes')
+    .upsert({clave:'promo_bonificacion', valor, actualizado:new Date().toISOString(), actualizado_por:nombreUsuario()}, {onConflict:'clave'})
+    .select('clave')
+    .then(({data,error})=>{
+      if(error) toast("⚠️ El aviso no se guardó para los demás: "+error.message);
+      else if(!data || !data.length) toast("⚠️ El aviso no se guardó: solo la dueña (Maestro) puede cambiarlo.");
+    });
+  return true;
+};
 
 /* ---- Alta de cliente: devuelve el número de ficha nuevo, o null si falló ----
    Va por la función `aura_crear_cliente` de la base. El alta directa pedía la

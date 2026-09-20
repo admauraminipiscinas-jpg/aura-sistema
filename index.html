@@ -42,6 +42,12 @@
   .pill-btn:hover{background:#f3f6f5}
   .pill-btn.viejo{background:#fff4d6;border-color:#f0d27a;color:#946c00;font-weight:700}
   .pill-btn.cargando{opacity:.6;cursor:wait}
+  /* Cartel de la bonificación vigente (arriba de Vender) */
+  .aviso-promo{display:flex;gap:14px;align-items:flex-start;border:2px solid;border-radius:14px;padding:14px 16px;margin-bottom:18px;font-size:14.5px;line-height:1.5}
+  .aviso-promo .ico{font-size:26px;line-height:1}
+  .aviso-promo .txt{flex:1;min-width:0}
+  .aviso-promo .txt b{font-size:15.5px}
+  .aviso-promo .txt div{margin-top:3px}
   /* Layout */
   .wrap{display:flex;min-height:calc(100vh - 56px)}
   .side{width:230px;background:#fff;border-right:1px solid var(--linea);padding:10px 0;flex-shrink:0}
@@ -554,6 +560,7 @@ function viewVender(){
   const minEnt = fechaMasDias(7);
   $("#main").innerHTML = `
     <h1 class="page">Nueva Venta</h1>
+    ${htmlAvisoPromo()}
     <div class="grid2">
       <div>
         ${esMaestro()?`
@@ -895,6 +902,132 @@ function toggleNota(){
   if(abrir){ const t=$("#vNota"); if(t) t.focus(); }
 }
 
+/* ====== BONIFICACIONES: qué se puede regalar y hasta cuándo ================
+   Los vendedores bonifican agregando productos de precio $0 (o el ítem de
+   descuento, que es negativo). Sin un límite claro terminan regalando de todo,
+   así que la bonificación vigente se define en un solo lugar (tabla `ajustes`,
+   clave "promo_bonificacion") y desde ahí sale el cartel de Vender y el freno
+   al agregar. Lo edita el Maestro; los valores de acá son los de fábrica, por
+   si todavía no se corrió `migracion_2026-09_promociones.sql`. */
+let PROMO = {
+  activa: true,
+  hasta: "2026-10-01",
+  texto: "La ÚNICA bonificación autorizada es el limpiafondo inalámbrico. Ningún otro producto se bonifica sin autorización de la dueña.",
+  productos: []          // ids del catálogo que sí se pueden bonificar
+};
+function esBonificacion(p){ return Number(p && p.precio) <= 0; }
+function promoVigente(){ return !!PROMO.activa && (!PROMO.hasta || hoyISO() <= PROMO.hasta); }
+function bonificacionPermitida(p){ return promoVigente() && (PROMO.productos||[]).includes(p.id); }
+function productosBonificables(){ return PRODUCTOS.filter(p=>esBonificacion(p) && p.activo!==false); }
+function nombresPromo(){
+  const n=(PROMO.productos||[]).map(id=>{ const p=PRODUCTOS.find(x=>x.id===id); return p?p.nombre:null; }).filter(Boolean);
+  return n.join(" · ");
+}
+/* Cartel fijo arriba de Vender. En verde mientras la bonificación esté
+   vigente, en rojo cuando se venció: que nadie tenga que acordarse la fecha. */
+function htmlAvisoPromo(){
+  const vig=promoVigente();
+  const dias=PROMO.hasta?diffDias(PROMO.hasta):null;
+  const cuando = !PROMO.hasta ? "" :
+    (vig ? `Vigente hasta el <b>${fmtFechaCorta(PROMO.hasta)}</b>${dias===0?" (último día)":(dias>0?` · quedan ${dias} día${dias===1?'':'s'}`:"")}`
+         : `<b>Venció el ${fmtFechaCorta(PROMO.hasta)}</b>`);
+  const lista=nombresPromo();
+  const estilo = vig
+    ? "background:#eaf3ef;border-color:#cfe6dc;color:#1f4a3a"
+    : "background:#fef2f2;border-color:#fecaca;color:#b91c1c";
+  return `
+    <div class="aviso-promo" style="${estilo}">
+      <div class="ico">${vig?'🎁':'🚫'}</div>
+      <div class="txt">
+        <b>${vig?'Bonificación autorizada':'No hay ninguna bonificación autorizada'}</b>
+        <div>${esc(PROMO.texto||'')}</div>
+        ${lista?`<div>Se puede bonificar: <b>${esc(lista)}</b></div>`:''}
+        ${cuando?`<div>${cuando}</div>`:''}
+      </div>
+      ${esMaestro()?`<button class="btn btn-ghost btn-sm" onclick="abrirPromo()" title="Cambiar el aviso, la fecha y qué se puede bonificar">✏️ Editar aviso</button>`:''}
+    </div>`;
+}
+/* Control al agregar un producto bonificado (en Vender y al editar la venta).
+   Devuelve true si se puede seguir. */
+function permitirBonificacion(p){
+  if(!esBonificacion(p)) return true;
+  if(bonificacionPermitida(p)) return true;
+  const manda = esMaestro() || esAdmin();
+  const motivo = promoVigente()
+    ? `"${p.nombre}" no está en la bonificación autorizada`
+    : `no hay ninguna bonificación vigente${PROMO.hasta?` (venció el ${fmtFechaCorta(PROMO.hasta)})`:''}`;
+  /* Si todavía no se eligieron los productos bonificables, no frenamos a nadie
+     (frenaríamos también lo que sí está permitido): pedimos confirmación y
+     queda registrado quién lo hizo. */
+  const sinConfigurar = !(PROMO.productos||[]).length;
+  if(!manda && !sinConfigurar){
+    toast(`🚫 No podés bonificar: ${motivo}. Pedile autorización a la dueña.`);
+    return false;
+  }
+  const ok = confirm(`⚠️ Atención: ${motivo}.\n\n${PROMO.texto||''}\n\nEsta bonificación queda registrada a tu nombre en el historial del sistema.\n\n¿La agregás igual?`);
+  if(ok) auditar("Bonificación fuera de lo autorizado","producto",p.id,`${p.nombre} (${money(p.precio)})`);
+  return ok;
+}
+
+/* Ventana para cambiar la bonificación vigente (solo Maestro). */
+function abrirPromo(){
+  if(!esMaestro()){ toast("Solo la dueña puede cambiar el aviso"); return; }
+  const bonificables=productosBonificables();
+  $("#modalRoot").innerHTML=`
+   <div class="modal-overlay" onclick="if(event.target===this)cerrarModal()">
+    <div class="modal" style="max-width:600px">
+     <header><h3>🎁 Bonificación vigente</h3><button class="x" onclick="cerrarModal()">✕</button></header>
+     <div class="body">
+       <div class="row">
+         <div class="field" style="flex:0 0 190px"><label>¿Hay bonificación?</label>
+           <select id="pmActiva">
+             <option value="si" ${PROMO.activa?'selected':''}>Sí, está vigente</option>
+             <option value="no" ${!PROMO.activa?'selected':''}>No, ninguna</option>
+           </select>
+         </div>
+         <div class="field" style="flex:0 0 190px"><label>Hasta el día</label>
+           <input type="date" id="pmHasta" value="${esc(PROMO.hasta||'')}">
+         </div>
+       </div>
+       <div class="field" style="margin-top:12px"><label>Texto que ven los vendedores</label>
+         <textarea id="pmTexto" placeholder="Ej.: La única bonificación autorizada es…">${esc(PROMO.texto||'')}</textarea>
+       </div>
+       <h4 style="margin:16px 0 6px;color:#374151">¿Qué se puede bonificar?</h4>
+       <div class="help" style="margin-top:0">Tildá los productos permitidos. Lo que no esté tildado, el vendedor <b>no lo puede agregar</b>: le aparece un cartel y tiene que pedirte autorización.
+       ${bonificables.length?'':'<br><b>Ojo:</b> en el catálogo no hay ningún producto con precio $ 0. Cargá el limpiafondo inalámbrico en Productos con precio 0 y volvé acá.'}</div>
+       <div style="max-height:220px;overflow:auto;margin-top:10px">
+         ${bonificables.map(p=>`<label style="display:flex;gap:10px;align-items:center;padding:7px 2px;border-bottom:1px solid var(--linea);cursor:pointer">
+            <input type="checkbox" class="pm-prod" value="${p.id}" style="width:auto" ${(PROMO.productos||[]).includes(p.id)?'checked':''}>
+            <span><b>${esc(p.nombre)}</b>${p.desc?` <span class="legend">· ${esc(p.desc)}</span>`:''} <span class="legend">— ${money(p.precio)}</span></span>
+          </label>`).join("")}
+       </div>
+     </div>
+     <div class="foot">
+       <button class="btn btn-ghost" onclick="cerrarModal()">Cancelar</button>
+       <button class="btn btn-green" id="btnGuardarPromo" onclick="guardarPromo()">💾 Guardar aviso</button>
+     </div>
+    </div>
+   </div>`;
+}
+/* Guarda en memoria; conexion.js la reemplaza para guardarla en la base. */
+function guardarPromo(){
+  const nueva={
+    activa: $("#pmActiva").value==='si',
+    hasta: ($("#pmHasta").value||"").trim(),
+    texto: ($("#pmTexto").value||"").trim(),
+    productos: [...document.querySelectorAll('.pm-prod:checked')].map(c=>+c.value)
+  };
+  if(nueva.activa && !nueva.hasta){ toast("⚠️ Poné hasta qué día vale la bonificación"); $("#pmHasta").focus(); return false; }
+  PROMO=nueva;
+  auditar("Aviso de bonificación actualizado","ajuste","promo_bonificacion",
+    `${nueva.activa?`vigente hasta ${fmtFechaCorta(nueva.hasta)}`:'sin bonificación'} · ${nombresPromo()||'sin productos elegidos'}`);
+  cerrarModal();
+  /* Redibujamos solo el cartel: viewVender() vaciaría una venta a medio cargar. */
+  const av=document.querySelector('.aviso-promo'); if(av) av.outerHTML=htmlAvisoPromo();
+  toast("✅ Aviso guardado");
+  return true;
+}
+
 /* ====== PRODUCTOS EN LA VENTA ====== */
 function filtrarProductos(q){
   const box=$("#vProdSug"); if(!box) return;
@@ -917,6 +1050,7 @@ function elegirProducto(id){
 function addItem(){
   if(vProdSel==null){ toast("⚠️ Buscá y elegí un producto de la lista"); return; }
   const p = PRODUCTOS.find(x=>x.id===vProdSel); if(!p) return;
+  if(!permitirBonificacion(p)) return;
   const cant = Math.max(1,+$("#vCant").value||1);
   const ex = carrito.find(i=>i.id===p.id);
   if(ex) ex.cant+=cant; else carrito.push({id:p.id,nombre:p.nombre+(p.desc?" · "+p.desc:""),precio:p.precio,cant});
@@ -2321,6 +2455,7 @@ function editDelItem(idx){ editDraft.items.splice(idx,1); editRenderItems(); }
 function editAddItem(){
   const id=+$("#edProd").value; if(!id){ toast("Elegí un producto de la lista"); return; }
   const p=PRODUCTOS.find(x=>x.id===id); if(!p) return;
+  if(!permitirBonificacion(p)) return;
   const cant=Math.max(1,+$("#edCant").value||1);
   const nombre=p.nombre+(p.desc?" · "+p.desc:"");
   const ex=editDraft.items.find(i=>i.nombre===nombre);
