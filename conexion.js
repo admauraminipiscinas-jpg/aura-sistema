@@ -40,7 +40,11 @@ function sesionVencida(){
 const SB = window.supabase.createClient(
   "https://dnamctecmutlmgblhnbg.supabase.co",
   "sb_publishable_GMWcvSFIPklV9e9PCb0c2g_GMKR_J-w",
-  { auth: { persistSession: true, autoRefreshToken: true, storage: almacenSesion } }
+  { auth: { persistSession: true, autoRefreshToken: true, storage: almacenSesion },
+    /* `cache:'no-store'`: que el navegador del celular no pueda contestar con
+       una copia guardada de una consulta anterior. Los datos que se muestran
+       tienen que venir siempre de la base. */
+    global: { fetch: (url, opciones) => fetch(url, {...(opciones||{}), cache:'no-store'}) } }
 );
 /* Marca de que este archivo cargó: index.html la usa para avisar si falló. */
 window.SISTEMA_CONECTADO = true;
@@ -79,6 +83,8 @@ async function cargarTodo(){
   /* Permisos: arrancar de los valores por defecto y sobreescribir con lo guardado en la base. */
   PERMISOS = JSON.parse(JSON.stringify(PERMISOS_DEFAULT));
   permData.forEach(r=>{ if(!PERMISOS[r.rol]) PERMISOS[r.rol]={}; PERMISOS[r.rol][r.permiso]=r.permitido?1:0; });
+  /* Marca de cuándo se trajeron: es lo que muestra el botón 🔄 de la barra. */
+  marcarDatosCargados();
 }
 
 /* ---- Auditoría: registra en memoria y persiste en la base ---- */
@@ -144,8 +150,26 @@ function volverAlLogin(motivo){
   const u=$("#logUser"); if(u) u.focus();
 }
 
+/* Cuando el cierre lo pedimos nosotros (botón Salir o las 2 horas), ya
+   mostramos el cartel que corresponde: el aviso automático no tiene que
+   pisarlo. */
+let _cierreNuestro = false;
+function marcarCierreNuestro(){ _cierreNuestro = true; setTimeout(()=>{ _cierreNuestro = false; }, 4000); }
+
+/* Si la sesión se cae sola (el permiso se venció mientras la pestaña estaba
+   guardada, o el Maestro desactivó al usuario), avisamos en vez de dejar la
+   pantalla con datos viejos que ya no se pueden guardar. */
+SB.auth.onAuthStateChange(function(evento){
+  if(evento !== 'SIGNED_OUT' || _cierreNuestro) return;
+  if(!adentroDelSistema()) return;
+  volverAlLogin("Se cerró tu sesión. Ingresá de nuevo para seguir trabajando con los datos al día.");
+});
+
 window.salir = async function(){
-  try{ await SB.auth.signOut(); }catch(e){}
+  marcarCierreNuestro();
+  /* Con mala señal, el cierre de sesión puede quedar colgado. No lo esperamos
+     más de 2 segundos y medio: la pantalla de entrada tiene que aparecer. */
+  try{ await Promise.race([SB.auth.signOut(), new Promise(r=>setTimeout(r,2500))]); }catch(e){}
   /* Borramos la marca de actividad pero dejamos la preferencia del tilde, así
      no hay que volver a tildarlo en la computadora propia cada vez. */
   try{ localStorage.removeItem(ACTIVIDAD_KEY); }catch(_){}
@@ -154,6 +178,7 @@ window.salir = async function(){
 
 /* Cierre automático cuando pasaron 2 horas sin tocar el sistema. */
 async function cerrarPorInactividad(){
+  marcarCierreNuestro();
   try{ await SB.auth.signOut(); }catch(_){}
   try{ localStorage.removeItem(ACTIVIDAD_KEY); }catch(_){}
   volverAlLogin("Cerramos la sesión por seguridad: pasaron 2 horas sin usar el sistema.");
@@ -481,8 +506,8 @@ async function _guardarClienteReal(){
         .catch(ex=>toast("⚠️ El cliente se guardó, pero no se actualizó en sus ventas: "+(ex.message||ex)));
     }
   } else {
-    const {data,error}=await SB.from('clientes').insert(fila).select().single(); if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return; }
-    const id=data.id;
+    const id = await altaDeCliente(fila);
+    if(id==null) return;                       // el aviso ya lo dio altaDeCliente
     CLIENTES.push({id,nombre:datos.nombre,apellido:datos.apellido,dni:datos.dni,tel:datos.tel,mail:datos.mail,provincia:datos.provincia,localidad:datos.localidad,domicilio:datos.domicilio,saldo:0,activo:true});
     if(modalModo==="venta") clienteActual={id,...datos};
   }
@@ -491,6 +516,28 @@ async function _guardarClienteReal(){
   viewClientes();
   if(entregasMal.length) toast(`⚠️ El cliente se guardó, pero NO se pudo cambiar la entrega de la venta #${entregasMal.join(", #")}`);
   else toast(ent.cambios.length ? "✅ Cliente y fecha de entrega guardados" : "✅ Cliente guardado");
+}
+
+/* ---- Alta de cliente: devuelve el número de ficha nuevo, o null si falló ----
+   Va por la función `aura_crear_cliente` de la base. El alta directa pedía la
+   ficha recién creada en el mismo paso (`.insert().select()`), y desde que el
+   vendedor solo puede leer sus propios clientes eso lo hacía chocar contra la
+   regla de lectura: "new row violates row-level security policy for table
+   clientes" — el cliente no se cargaba y no se podía vender.
+   Si la función todavía no está en la base (falta correr
+   `arreglo_2026-09_alta_clientes_vendedor.sql`), seguimos con el alta de
+   siempre, que funciona para Maestro y Administrador. */
+async function altaDeCliente(fila){
+  const r = await SB.rpc('aura_crear_cliente', {
+    p_nombre:fila.nombre, p_apellido:fila.apellido, p_dni:fila.dni, p_telefono:fila.telefono,
+    p_email:fila.email, p_provincia:fila.provincia, p_localidad:fila.localidad, p_domicilio:fila.domicilio
+  });
+  if(!r.error) return r.data;
+  const faltaLaFuncion = r.error.code==='PGRST202' || r.error.code==='42883' || /aura_crear_cliente/i.test(r.error.message||'');
+  if(!faltaLaFuncion){ toast("⚠️ Error al guardar el cliente: "+r.error.message); return null; }
+  const {data,error} = await SB.from('clientes').insert(fila).select().single();
+  if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return null; }
+  return data.id;
 }
 
 /* ---- ¿Ese DNI ya está cargado? (vendedores) ----
@@ -760,15 +807,69 @@ window.addEventListener('load', async function(){
 });
 
 /* Cada acción de la persona corre el reloj. Anotamos como mucho una vez cada
-   30 segundos para no estar escribiendo todo el tiempo. */
+   30 segundos para no estar escribiendo todo el tiempo.
+   OJO con el orden: primero hay que ver si la sesión YA venció y recién
+   después correr el reloj. Al revés (como estaba antes), el primer toque al
+   volver a una pestaña que quedó abierta toda la noche borraba el
+   vencimiento: la sesión vencida no se cerraba nunca y se seguía navegando
+   con los datos de hace horas, sin que nada avisara. */
 let _ultimaMarca = 0;
+function adentroDelSistema(){ const a=$("#appWrap"); return !!a && a.style.display !== "none"; }
 ['click','keydown','touchstart','scroll'].forEach(function(ev){
   document.addEventListener(ev, function(){
+    if(adentroDelSistema() && sesionVencida()){ cerrarPorInactividad(); return; }
     const ahora = Date.now();
     if(ahora - _ultimaMarca < 30000) return;
     _ultimaMarca = ahora; marcarActividad();
   }, {passive:true});
 });
+
+/* ---- Traer de nuevo los datos de la base ----
+   La pantalla trabaja en memoria: sin esto, una pestaña abierta muestra lo que
+   había cuando se entró. Se usa desde el botón 🔄 y al volver a la pestaña. */
+let _refrescando = false;
+window.refrescarDatos = async function(manual){
+  if(!adentroDelSistema() || _refrescando) return;
+  /* No redibujamos encima de algo a medio hacer: se perdería. */
+  const trabajo = hayTrabajoEnCurso();
+  if(trabajo){ if(manual) toast(`⚠️ No actualizo ahora: tenés ${trabajo}. Terminala y volvé a tocar 🔄`); return; }
+  if(sesionVencida()){ await cerrarPorInactividad(); return; }
+  _refrescando = true;
+  const btn = $("#btnRefrescar"); if(btn) btn.classList.add("cargando");
+  try{
+    const {data:{session}} = await SB.auth.getSession();
+    if(!session || !session.user){
+      volverAlLogin("Se cerró tu sesión. Ingresá de nuevo para ver los datos al día.");
+      return;
+    }
+    await cargarTodo();
+    marcarActividad();
+    nav(vistaActual);
+    if(manual) toast("✅ Datos actualizados");
+  }catch(ex){
+    if(manual) toast("⚠️ No se pudieron actualizar los datos: "+(ex.message||ex));
+  }finally{
+    _refrescando = false;
+    const b = $("#btnRefrescar"); if(b) b.classList.remove("cargando");
+  }
+};
+
+/* ---- Volver a una pestaña que quedó abierta ----
+   Es el caso de todos los días: se deja el sistema abierto, se vuelve horas
+   después y lo que se ve es viejo. Si la sesión venció, se cierra; si sigue
+   viva, se traen los datos de nuevo solos. */
+function alVolverALaPestania(){
+  if(!adentroDelSistema()) return;
+  if(sesionVencida()){ cerrarPorInactividad(); return; }
+  if(Date.now() - (DATOS_CARGADOS_EN||0) > 60000) refrescarDatos(false);
+}
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'visible') alVolverALaPestania();
+});
+window.addEventListener('focus', alVolverALaPestania);
+/* En el celular, al volver el navegador restaura la página tal cual estaba
+   (sin volver a cargarla): esto es lo único que avisa de esa vuelta. */
+window.addEventListener('pageshow', function(e){ if(e.persisted) alVolverALaPestania(); });
 
 /* Control cada minuto: si venció, cierra sola. */
 setInterval(function(){
