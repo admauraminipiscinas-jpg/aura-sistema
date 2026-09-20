@@ -912,7 +912,7 @@ function toggleNota(){
 let PROMO = {
   activa: true,
   hasta: "2026-10-01",
-  texto: "La ÚNICA bonificación autorizada es el limpiafondo inalámbrico. Ningún otro producto se bonifica sin autorización de la dueña.",
+  texto: "La ÚNICA bonificación autorizada es el limpiafondo inalámbrico. Ningún otro producto se bonifica.",
   productos: []          // ids del catálogo que sí se pueden bonificar
 };
 function esBonificacion(p){ return Number(p && p.precio) <= 0; }
@@ -927,9 +927,8 @@ function nombresPromo(){
    vigente, en rojo cuando se venció: que nadie tenga que acordarse la fecha. */
 function htmlAvisoPromo(){
   const vig=promoVigente();
-  const dias=PROMO.hasta?diffDias(PROMO.hasta):null;
   const cuando = !PROMO.hasta ? "" :
-    (vig ? `Vigente hasta el <b>${fmtFechaCorta(PROMO.hasta)}</b>${dias===0?" (último día)":(dias>0?` · quedan ${dias} día${dias===1?'':'s'}`:"")}`
+    (vig ? `Vigente hasta el <b>${fmtFechaCorta(PROMO.hasta)}</b>`
          : `<b>Venció el ${fmtFechaCorta(PROMO.hasta)}</b>`);
   const lista=nombresPromo();
   const estilo = vig
