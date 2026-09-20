@@ -543,7 +543,13 @@ window.guardarPromo = function(){
     .upsert({clave:'promo_bonificacion', valor, actualizado:new Date().toISOString(), actualizado_por:nombreUsuario()}, {onConflict:'clave'})
     .select('clave')
     .then(({data,error})=>{
-      if(error) toast("⚠️ El aviso no se guardó para los demás: "+error.message);
+      /* PGRST205 = la tabla `ajustes` no existe todavía en la base. Pasa cuando
+         no se corrió `migracion_2026-09_promociones.sql`: el aviso funciona,
+         pero el cambio queda solo en esta computadora. */
+      if(error && (error.code==='PGRST205' || /schema cache|does not exist/i.test(error.message||''))){
+        toast("⚠️ El aviso quedó solo en esta computadora: falta correr en Supabase la migración 'migracion_2026-09_promociones.sql'.");
+      }
+      else if(error) toast("⚠️ El aviso no se guardó para los demás: "+error.message);
       else if(!data || !data.length) toast("⚠️ El aviso no se guardó: solo la dueña (Maestro) puede cambiarlo.");
     });
   return true;
