@@ -1844,9 +1844,8 @@ function remitoHTML(nro){
     .remito{max-width:760px;margin:0 auto;background:#fff;border:1px solid #333}
     .remito .original{text-align:center;font-weight:700;border-bottom:1px solid #333;padding:6px;background:#eef3f5}
     .remito .top{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:center;border-bottom:1px solid #333;padding:12px}
-    .remito .logo{display:flex;flex-direction:column;align-items:flex-start}
+    .remito .logo{display:flex;align-items:center}
     .remito .logo img{height:26px;display:block}
-    .remito .logo small{display:block;font-size:9px;letter-spacing:3px;color:#6b7280;margin-top:3px}
     .remito .rbox{border:1px solid #333;text-align:center;padding:4px 16px}
     .remito .rbox .r{font-size:20px;font-weight:700;line-height:1}
     .remito .rbox .cod{font-size:9px}
@@ -1875,7 +1874,7 @@ function remitoHTML(nro){
     <div class="remito">
       <div class="original">ORIGINAL</div>
       <div class="top">
-        <div class="logo"><img src="data:image/png;base64,${LOGO_REMITO_B64}" alt="Aura"><small>MINIPISCINAS</small></div>
+        <div class="logo"><img src="data:image/png;base64,${LOGO_REMITO_B64}" alt="Aura"></div>
         <div class="rbox"><div class="r">R</div><div class="cod">Cod. 000</div></div>
         <div class="venta">
           <div class="nro">Venta N°${v.nro}</div>
