@@ -1159,18 +1159,6 @@ function entregaCell(v){
   const r=-d; return `${f}<br><span class="cont cont-ret" style="font-weight:800">${r} día${r===1?'':'s'} de retraso</span>`;
 }
 function montoAR(n){ return (n||0).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-/* Frase que ve el CLIENTE en el comprobante. Va por palabra clave, no por el
-   nombre exacto: los estados "En camino Omar / Santiago / Diego / Flete" llevan
-   adentro a quién le toca el reparto, que es información interna — al cliente
-   le decimos solamente que su pedido está en camino. */
-function fraseEstado(e){
-  const est=(e||"").toLowerCase();
-  if(est.includes("en camino"))    return "Su pedido ya está en camino.";
-  if(est.includes("entregado"))    return "¡Su pedido fue entregado! Muchas gracias por su compra.";
-  if(est.includes("post venta"))   return "Su pedido está en servicio de post venta.";
-  if(est.includes("presupuesto"))  return "Le acercamos el detalle de su presupuesto.";
-  return "Su orden está siendo preparada.";
-}
 
 /* ====== VENDEDORES (cantidad de ventas por vendedor) ====== */
 /* El vendedor no tiene todas las ventas en memoria (ver ventaVisible), así que
@@ -1533,6 +1521,12 @@ function abrirOrden(nro){
   const cobrado=granTotal(v)-v.saldo;
   const ec=estColor(v.estado);
 
+  /* El remito se arma acá (en la ventana principal, que sí tiene VENTAS/CLIENTES)
+     y se incrusta ya armado en el popup de la orden. Así "Ver remito /
+     comprobante" no depende de window.opener: algunos navegadores lo cortan
+     entre ventanas emergentes y el botón quedaba sin hacer nada, sin avisar. */
+  const remitoStr = remitoHTML(nro);
+
   /* Texto que se lleva el botón "Copiar datos": los cinco datos que se usan para
      coordinar una entrega, uno por renglón y listos para pegar en WhatsApp. */
   const _pilCopia = items.filter(i=>Number(i.precio)!==0).map(i=>i.nombre);
@@ -1709,7 +1703,7 @@ function abrirOrden(nro){
       <button class="btn" id="btnCopiar" onclick="copiarDatos()">📋 Copiar datos</button>
       <button class="btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
       ${puedeEditarVenta(v)?`<button class="btn" onclick="if(window.opener){ window.opener.abrirEditarVenta(${v.nro}); window.opener.focus(); window.close(); }">✏️ Editar venta</button>`:''}
-      <button class="btn gris" onclick="window.opener && window.opener.abrirRemito(${v.nro})">📄 Ver remito / comprobante</button>
+      <button class="btn gris" onclick="verRemito()">📄 Ver remito / comprobante</button>
       ${((v.saldo>0 || (v.pagos&&v.pagos.length)) && (esMaestro()||esAdmin()))?`<button class="btn cobro" onclick="window.opener && window.opener.cobrarSaldo(${v.nro}); window.close();">💲 Cobros / saldo</button>`:''}
     </div>
 
@@ -1810,6 +1804,12 @@ function abrirOrden(nro){
         navigator.clipboard.writeText(DATOS_COPIA).then(listo).catch(alternativa);
       } else { alternativa(); }
     }
+    function verRemito(){
+      var w = window.open("", "_blank");
+      if(!w){ alert("⚠️ Permití las ventanas emergentes para ver el remito"); return; }
+      w.document.write(${JSON.stringify(remitoStr || "")});
+      w.document.close();
+    }
   <\/script>
   </body></html>`;
   const w=window.open("","_blank");
@@ -1818,8 +1818,11 @@ function abrirOrden(nro){
 }
 
 /* Email al cliente + remito (lo que recibe por correo al cargarse la compra) */
-function abrirRemito(nro){
-  const v=VENTAS.find(x=>x.nro===nro); if(!v){ toast("Venta no encontrada"); return; }
+/* Arma el HTML del remito como string, sin abrir nada — así abrirOrden() puede
+   incrustarlo directo en su propia ventana (ver más abajo) y el botón "Ver
+   remito / comprobante" no depende de window.opener para funcionar. */
+function remitoHTML(nro){
+  const v=VENTAS.find(x=>x.nro===nro); if(!v) return null;
   const c=CLIENTES.find(x=>x.id===v.clienteId)||{};
   const items=v.items||[];
   const piezas=items.reduce((a,i)=>a+(i.cant||0),0);
@@ -1832,19 +1835,6 @@ function abrirRemito(nro){
     body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:#f4f6f8;margin:0;padding:24px 14px;color:#1f2937}
     .toolbar{max-width:760px;margin:0 auto 16px;display:flex;gap:10px}
     .toolbar .btn{background:#3f6f5e;color:#fff;border:none;border-radius:9px;padding:10px 18px;font-weight:700;cursor:pointer;font-size:14px}
-    .cap{max-width:680px;margin:0 auto 6px;font-size:12px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
-    /* EMAIL */
-    .email{max-width:680px;margin:0 auto 4px;background:#e9f1f4;border:1px solid #d5e3e8;border-radius:6px;padding:34px 40px;text-align:center}
-    .email .marca{font-weight:700;font-size:16px;margin-bottom:20px}
-    .email h1{font-size:26px;margin:0 0 24px}
-    .email p{font-size:15px;line-height:1.55;margin:10px 0;color:#3a4750}
-    .email .verestado{display:inline-block;background:#7fb8cd;color:#fff;font-weight:700;padding:10px 22px;border-radius:6px;margin:6px 0 20px}
-    .email .medio{color:#2f8aa0;font-weight:600}
-    .email .nota{font-style:italic;font-size:12px;color:#5a6b73;margin-top:22px;line-height:1.5}
-    .email .efoot{display:flex;justify-content:space-between;gap:20px;border-top:1px solid #cddde3;margin-top:24px;padding-top:18px;font-size:13px;color:#2c6fb5;text-align:left}
-    .email .efoot .der{text-align:right}
-    .email .egen{background:#dbe7ec;margin:20px -40px -34px;padding:13px;font-weight:700;font-size:13px;border-radius:0 0 6px 6px}
-    .adjunto{max-width:680px;margin:14px auto 22px;font-size:13px;color:#444;padding:10px 4px;border-top:1px dashed #c7d2d8}
     /* REMITO */
     .remito{max-width:760px;margin:0 auto;background:#fff;border:1px solid #333}
     .remito .original{text-align:center;font-weight:700;border-bottom:1px solid #333;padding:6px;background:#eef3f5}
@@ -1870,31 +1860,12 @@ function abrirRemito(nro){
     .remito .nofact{font-weight:700;padding:8px 12px}
     .remito .pag{text-align:center;font-size:11px;color:#444;padding:4px}
     .remito .gen{text-align:center;font-size:10px;color:#777;padding:12px;border-top:1px solid #ddd}
-    @media print{ body{background:#fff;padding:0} .toolbar,.cap{display:none} }
+    @media print{ body{background:#fff;padding:0} .toolbar{display:none} }
   </style></head><body>
     <div class="toolbar">
-      <button class="btn" onclick="window.opener && window.opener.descargarRemitoPDF(${v.nro})">⬇️ Descargar PDF (adjunto)</button>
       <button class="btn" style="background:#6b7280" onclick="window.print()">🖨️ Imprimir</button>
     </div>
 
-    <div class="cap">Correo que recibe el cliente</div>
-    <div class="email">
-      <div class="marca">Aura Minipiscinas</div>
-      <h1>¡Gracias ${esc(v.cliente)}!</h1>
-      <p>${fraseEstado(v.estado)}</p>
-      <p>Con el botón que se encuentra abajo usted podrá seguir el estado de su orden actualizado.</p>
-      <div><span class="verestado">Ver estado</span></div>
-      <p class="medio">¡La factura digital colabora con el cuidado del medio ambiente!</p>
-      <div class="efoot">
-        <div>Vendedor: ${esc(v.vendedor)}<br>@aura.minipiscinas</div>
-        <div class="der">${MAIL_CONTACTO}</div>
-      </div>
-      <div class="egen">Mensaje generado por SISTEMAS DE GESTIÓN PARA PYMES</div>
-    </div>
-
-    <div class="adjunto">📎 Un archivo adjunto: <b style="cursor:pointer;color:#2c6fb5;text-decoration:underline" onclick="window.opener && window.opener.descargarRemitoPDF(${v.nro})">Venta_nro_${v.nro}_Comprobante_R.pdf</b></div>
-
-    <div class="cap">Remito adjunto</div>
     <div class="remito">
       <div class="original">ORIGINAL</div>
       <div class="top">
@@ -1927,6 +1898,12 @@ function abrirRemito(nro){
       <div class="gen">Comprobante generado por el Sistema de Gestión de Aura Minipiscinas<br>aura.minipiscinas</div>
     </div>
   </body></html>`;
+  return html;
+}
+/* Abre el remito en una ventana propia (usado cuando se llama directo, no
+   desde adentro del popup de la orden). */
+function abrirRemito(nro){
+  const html=remitoHTML(nro); if(!html){ toast("Venta no encontrada"); return; }
   const w=window.open("","_blank");
   if(!w){ toast("⚠️ Permití las ventanas emergentes para ver el remito"); return; }
   w.document.write(html); w.document.close();
