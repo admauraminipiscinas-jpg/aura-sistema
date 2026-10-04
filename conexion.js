@@ -533,28 +533,6 @@ async function _guardarClienteReal(){
   else toast(ent.cambios.length ? "✅ Cliente y fecha de entrega guardados" : "✅ Cliente guardado");
 }
 
-/* ---- Guardado: AVISO DE BONIFICACIÓN (tabla `ajustes`) ---- */
-const _guardarPromo = window.guardarPromo;
-window.guardarPromo = function(){
-  const ok = _guardarPromo();                 // valida, actualiza memoria, audita y cierra
-  if(!ok) return false;
-  const valor = {activa:PROMO.activa, hasta:PROMO.hasta, texto:PROMO.texto, productos:PROMO.productos};
-  SB.from('ajustes')
-    .upsert({clave:'promo_bonificacion', valor, actualizado:new Date().toISOString(), actualizado_por:nombreUsuario()}, {onConflict:'clave'})
-    .select('clave')
-    .then(({data,error})=>{
-      /* PGRST205 = la tabla `ajustes` no existe todavía en la base. Pasa cuando
-         no se corrió `migracion_2026-09_promociones.sql`: el aviso funciona,
-         pero el cambio queda solo en esta computadora. */
-      if(error && (error.code==='PGRST205' || /schema cache|does not exist/i.test(error.message||''))){
-        toast("⚠️ El aviso quedó solo en esta computadora: falta correr en Supabase la migración 'migracion_2026-09_promociones.sql'.");
-      }
-      else if(error) toast("⚠️ El aviso no se guardó para los demás: "+error.message);
-      else if(!data || !data.length) toast("⚠️ El aviso no se guardó: solo la dueña (Maestro) puede cambiarlo.");
-    });
-  return true;
-};
-
 /* ---- Alta de cliente: devuelve el número de ficha nuevo, o null si falló ----
    Va por la función `aura_crear_cliente` de la base. El alta directa pedía la
    ficha recién creada en el mismo paso (`.insert().select()`), y desde que el
