@@ -238,6 +238,11 @@
   .chof-card .v.ok{color:var(--ok)}
   .chof-card .s{font-size:11.5px;color:var(--muted);margin-top:3px}
   .chof-extra{font-size:11.5px;color:var(--muted)}
+  /* Cuadro de 12 meses por provincia (Reportes) */
+  .tabla-meses{font-size:12.5px;min-width:760px}
+  .tabla-meses th,.tabla-meses td{padding:7px 8px}
+  .tabla-meses .col-mes{background:#eaf3ef}
+  .tabla-meses thead .col-mes{color:var(--verde2);font-weight:800}
   td.r,th.r{text-align:right}
   td.r{white-space:nowrap;font-variant-numeric:tabular-nums}
   tfoot td{border-top:2px solid var(--linea);padding:12px 10px}
@@ -3487,7 +3492,7 @@ function refrescarHistorial(){
 function vendedoresRep(){ return [...new Set(HISTORIAL.map(l=>l.vendedor))].sort((a,b)=>(""+a).localeCompare(""+b,'es')); }
 
 /* Estado de la sección Reportes */
-let repTab="productos", repDesde="", repHasta="", repCat="", repVend="", repProv="", repEstado="", repMetrica="unidades", repMes=null, chartComp=null;
+let repTab="productos", repDesde="", repHasta="", repCat="", repVend="", repProv="", repEstado="", repMetrica="unidades", repMes=null, repAnio=null, chartComp=null;
 function provinciasRep(){ return [...new Set(HISTORIAL.map(l=>l.provincia).filter(Boolean))].sort((a,b)=>(""+a).localeCompare(b,'es')); }
 const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_L=["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -3511,11 +3516,46 @@ function mesesTotales(year,met,cat){
 function totalMes(year,mes,met,cat){
   let s=0; HISTORIAL.forEach(l=>{ if(+l.fecha.slice(0,4)!==year)return; if(+l.fecha.slice(5,7)-1!==mes)return; if(cat&&l.categoria!==cat)return; s+= met==="unidades"?l.unidades:l.monto; }); return s;
 }
+/* Cuánto se vendió en cada provincia, mes por mes, en un año.
+   Devuelve {provincia: [12 números]} ya filtrado por categoría. Es la base del
+   reporte por provincia: antes se sumaba el año entero y el mes elegido no
+   cambiaba nada. */
+function provinciaPorMes(anio,met,cat){
+  const m={};
+  HISTORIAL.forEach(l=>{
+    if(+l.fecha.slice(0,4)!==anio) return;
+    if(cat && l.categoria!==cat) return;
+    const p=l.provincia||"Otras / s.d.";
+    if(!m[p]) m[p]=Array(12).fill(0);
+    m[p][+l.fecha.slice(5,7)-1] += (met==="unidades" ? l.unidades : l.monto);
+  });
+  return m;
+}
+/* Años que tienen ventas cargadas (para el selector), con el actual siempre. */
+function aniosConVentas(){
+  const s=new Set(HISTORIAL.map(l=>+l.fecha.slice(0,4)).filter(Boolean));
+  s.add(new Date().getFullYear());
+  return [...s].sort((a,b)=>b-a);
+}
+/* Importes cortos para las tablas de 12 meses: "$ 4,2 M" en vez de "$ 4.200.000",
+   que con doce columnas no entra en la pantalla. */
+function montoCorto(v){
+  const a=Math.abs(v);
+  if(a>=1e6) return `$ ${(v/1e6).toLocaleString("es-AR",{maximumFractionDigits:1})} M`;
+  if(a>=1e3) return `$ ${Math.round(v/1e3).toLocaleString("es-AR")} k`;
+  return money(v);
+}
+const sumar = a => a.reduce((x,y)=>x+y,0);
+/* Los tres años de la comparativa: el elegido y los dos anteriores. Antes
+   estaban escritos a mano (2024/2025/2026) y en enero de 2027 el reporte iba
+   a quedar mostrando años viejos. */
+function aniosComparativa(){ const a=repAnio||new Date().getFullYear(); return [a-2,a-1,a]; }
 
 function viewReportes(){
   refrescarHistorial();   // que los reportes muestren las ventas como están ahora
   if(!repDesde){ repDesde=`${new Date().getFullYear()}-01-01`; repHasta=hoyISO(); }
   if(repMes==null) repMes=new Date().getMonth();
+  if(repAnio==null) repAnio=new Date().getFullYear();
   $("#main").innerHTML=`
     <h1 class="page">Reportes</h1>
     <div class="card" style="padding:8px;margin-bottom:16px">
@@ -3564,8 +3604,7 @@ function htmlRepProductos(){
       <div class="legend" style="margin-top:10px">Podés combinar todos los filtros: provincia + fecha, provincia + vendedor, fecha + estado, provincia + estado + vendedor, etc.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="chip" onclick="repDesde='${new Date().getFullYear()}-01-01';repHasta=hoyISO();renderRepBody()">Este año</button>
-        <button class="chip" onclick="repDesde='2025-01-01';repHasta='2025-12-31';renderRepBody()">2025</button>
-        <button class="chip" onclick="repDesde='2024-01-01';repHasta='2024-12-31';renderRepBody()">2024</button>
+        ${[1,2].map(n=>{const a=new Date().getFullYear()-n; return `<button class="chip" onclick="repDesde='${a}-01-01';repHasta='${a}-12-31';renderRepBody()">${a}</button>`;}).join("")}
         <button class="chip" onclick="repDesde=isoMenosDias(365);repHasta=hoyISO();renderRepBody()">Últimos 12 meses</button>
       </div>
     </div>
@@ -3596,15 +3635,19 @@ function htmlRepProductos(){
 /* --- 2) Comparativa mensual por año --- */
 function htmlRepComparativa(){
   const esU=repMetrica==="unidades";
-  const years=[2024,2025,2026];
+  const years=aniosComparativa();
   const tot=years.map(y=>mesesTotales(y,repMetrica,repCat));
   const totAnual=tot.map(a=>a.reduce((x,y)=>x+y,0));
   const fmt=v=>esU?v.toLocaleString("es-AR"):money(v);
-  const mesAct=new Date().getMonth();
+  const hoy=new Date();
+  /* Solo tapamos los meses que todavía no llegaron si el año que se muestra
+     es el actual; mirando un año pasado, los doce meses ya pasaron. */
+  const mesAct=(years[2]===hoy.getFullYear()) ? hoy.getMonth() : 11;
   const difTot= totAnual[1]? Math.round((totAnual[2]-totAnual[1])/totAnual[1]*100) : 0;
   return `
     <div class="card">
       <div class="row" style="align-items:end">
+        <div class="field" style="flex:0 0 120px"><label>Año</label><select onchange="repAnio=+this.value;renderRepBody()">${aniosConVentas().map(a=>`<option value="${a}" ${a===repAnio?'selected':''}>${a}</option>`).join("")}</select></div>
         <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
       </div>
@@ -3616,18 +3659,18 @@ function htmlRepComparativa(){
     <div class="card">
       <h3 style="margin-bottom:10px">Detalle mensual</h3>
       <table>
-        <thead><tr><th>Mes</th>${years.map(y=>`<th>${y}</th>`).join("")}<th>Dif. 25→26</th></tr></thead>
+        <thead><tr><th>Mes</th>${years.map(y=>`<th>${y}</th>`).join("")}<th>Dif. ${String(years[1]).slice(2)}→${String(years[2]).slice(2)}</th></tr></thead>
         <tbody>${MESES.map((mn,i)=>{const v24=tot[0][i],v25=tot[1][i],v26=tot[2][i];const fut=i>mesAct;const dif=v25?Math.round((v26-v25)/v25*100):(v26>0?100:0);return `<tr><td><b>${mn}</b></td><td>${fmt(v24)}</td><td>${fmt(v25)}</td><td>${fut?'<span class="legend">—</span>':fmt(v26)}</td><td>${fut?'—':`<b style="color:${dif>=0?'var(--ok)':'var(--rojo)'}">${dif>=0?'+':''}${dif}%</b>`}</td></tr>`;}).join("")}
         <tr style="border-top:2px solid var(--linea)"><td><b>Total año</b></td>${totAnual.map(t=>`<td><b>${fmt(t)}</b></td>`).join("")}<td><b style="color:${difTot>=0?'var(--ok)':'var(--rojo)'}">${difTot>=0?'+':''}${difTot}%</b></td></tr>
         </tbody>
       </table>
-      <div class="legend" style="margin-top:8px">2026 va hasta ${fmtFechaCorta(hoyISO())} (año en curso).</div>
+      <div class="legend" style="margin-top:8px">${years[2]===hoy.getFullYear()?`${years[2]} va hasta ${fmtFechaCorta(hoyISO())} (año en curso).`:`Años completos.`}</div>
     </div>`;
 }
 function dibujarComparativa(){
   const cv=document.getElementById("cvComp"); if(!cv||!window.Chart) return;
   if(chartComp){ chartComp.destroy(); chartComp=null; }
-  const esU=repMetrica==="unidades", years=[2024,2025,2026], cols=["#cbd5e1","#2c7be5","#3f6f5e"];
+  const esU=repMetrica==="unidades", years=aniosComparativa(), cols=["#cbd5e1","#2c7be5","#3f6f5e"];
   chartComp=new Chart(cv,{type:"bar",
     data:{labels:MESES,datasets:years.map((y,i)=>({label:String(y),data:mesesTotales(y,repMetrica,repCat),backgroundColor:cols[i],borderRadius:4}))},
     options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{position:"top"},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${esU?c.parsed.y.toLocaleString("es-AR")+' u':money(c.parsed.y)}`}}},scales:{y:{beginAtZero:true,ticks:{callback:v=>esU?v:money(v)}}}}});
@@ -3635,45 +3678,94 @@ function dibujarComparativa(){
 
 /* --- 3) Termómetro + provincias --- */
 function htmlRepTermometro(){
-  const esU=repMetrica==="unidades", mes=repMes;
-  const actual=totalMes(2026,mes,repMetrica,repCat), previo=totalMes(2025,mes,repMetrica,repCat);
+  const esU=repMetrica==="unidades", mes=repMes, anio=repAnio, anioAnt=anio-1;
+  const actual=totalMes(anio,mes,repMetrica,repCat), previo=totalMes(anioAnt,mes,repMetrica,repCat);
   const dif= previo? Math.round((actual-previo)/previo*100) : (actual>0?100:0);
   const max=Math.max(actual,previo,1)*1.2;
   const fillA=Math.min(100,actual/max*100), markP=Math.min(100,previo/max*100);
   const color= dif>=0?'var(--ok)':'var(--rojo)';
   const fmt=v=>esU?`${v.toLocaleString("es-AR")} u`:money(v);
-  const provA={}, provP={};
-  HISTORIAL.forEach(l=>{ if(repCat&&l.categoria!==repCat)return; const yr=l.fecha.slice(0,4); const v=esU?l.unidades:l.monto;
-    if(yr==="2026"){ provA[l.provincia]=(provA[l.provincia]||0)+v; } else if(yr==="2025"){ provP[l.provincia]=(provP[l.provincia]||0)+v; } });
-  const rankProv=Object.entries(provA).map(([p,v])=>({p,v,ant:provP[p]||0})).sort((a,b)=>b.v-a.v);
-  const maxProv=Math.max(1,...rankProv.map(r=>Math.abs(r.v)));
+  const fmtC=v=>esU?v.toLocaleString("es-AR"):montoCorto(v);
+  /* Por provincia y por mes: el mes elegido, el mismo mes del año anterior y
+     todo el año. Antes acá se sumaba el año entero y elegir el mes no hacía
+     ninguna diferencia. */
+  const porMes=provinciaPorMes(anio,repMetrica,repCat);
+  const porMesAnt=provinciaPorMes(anioAnt,repMetrica,repCat);
+  const provincias=[...new Set([...Object.keys(porMes),...Object.keys(porMesAnt)])];
+  const filas=provincias.map(p=>{
+    const meses=porMes[p]||Array(12).fill(0);
+    const mesesAnt=porMesAnt[p]||Array(12).fill(0);
+    return {p, mes:meses[mes], mesAnt:mesesAnt[mes], anio:sumar(meses), meses};
+  }).filter(r=>r.anio>0 || r.mesAnt>0)
+    .sort((a,b)=> b.mes-a.mes || b.anio-a.anio || a.p.localeCompare(b.p,'es'));
+  const maxMes=Math.max(1,...filas.map(r=>Math.abs(r.mes)));
+  const totalMesTodas=sumar(filas.map(r=>r.mes));
+  /* En el año en curso, los meses que todavía no pasaron van como "—". */
+  const hoy=new Date(), mesTope=(anio===hoy.getFullYear()) ? hoy.getMonth() : 11;
+  const totalesMes=Array.from({length:12},(_,i)=>sumar(filas.map(r=>r.meses[i])));
   return `
     <div class="card">
       <div class="row" style="align-items:end">
-        <div class="field"><label>Mes a comparar (2026 vs 2025)</label><select onchange="repMes=+this.value;renderRepBody()">${MESES_L.map((mn,i)=>`<option value="${i}" ${i===mes?'selected':''}>${mn}</option>`).join("")}</select></div>
+        <div class="field" style="flex:0 0 120px"><label>Año</label><select onchange="repAnio=+this.value;renderRepBody()">${aniosConVentas().map(a=>`<option value="${a}" ${a===anio?'selected':''}>${a}</option>`).join("")}</select></div>
+        <div class="field"><label>Mes</label><select onchange="repMes=+this.value;renderRepBody()">${MESES_L.map((mn,i)=>`<option value="${i}" ${i===mes?'selected':''}>${mn}</option>`).join("")}</select></div>
         <div class="field"><label>Medir por</label><select onchange="repMetrica=this.value;renderRepBody()"><option value="unidades" ${esU?'selected':''}>Unidades</option><option value="monto" ${!esU?'selected':''}>Facturación</option></select></div>
         <div class="field"><label>Categoría</label><select onchange="repCat=this.value;renderRepBody()"><option value="">Todas</option>${CATEGORIAS.map(c=>`<option ${repCat===c?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
       </div>
+      <div class="help" style="margin-top:10px">Para ver solo piletas, elegí la categoría <b>Minipiscinas</b>. Lo que ves abajo es <b>${MESES_L[mes]} de ${anio}</b>.</div>
     </div>
     <div class="grid2">
       <div class="card">
-        <h3 style="margin-bottom:6px">${MESES_L[mes]}: 2026 vs 2025</h3>
+        <h3 style="margin-bottom:6px">${MESES_L[mes]}: ${anio} vs ${anioAnt}</h3>
         <div style="display:flex;justify-content:center;gap:28px;align-items:flex-end;margin:18px 0 10px">
           <div class="termo"><div class="termo-fill" style="height:${fillA}%"></div><div class="termo-mark" style="bottom:${markP}%"></div></div>
           <div style="text-align:left">
-            <div style="font-size:42px;font-weight:800;color:${color};line-height:1">${dif>=0?'+':''}${dif}%</div>
-            <div class="legend" style="margin-bottom:10px">respecto a ${MESES_L[mes]} 2025</div>
-            <div><b>2026:</b> ${fmt(actual)}</div>
-            <div><b>2025:</b> ${fmt(previo)}</div>
+            <div style="font-size:42px;font-weight:800;color:${color};line-height:1">${previo?`${dif>=0?'+':''}${dif}%`:(actual>0?'Nuevo':'—')}</div>
+            <div class="legend" style="margin-bottom:10px">${previo?`respecto a ${MESES_L[mes]} de ${anioAnt}`:`no hubo ventas en ${MESES_L[mes]} de ${anioAnt}`}</div>
+            <div><b>${anio}:</b> ${fmt(actual)}</div>
+            <div><b>${anioAnt}:</b> ${fmt(previo)}</div>
             <div style="margin-top:8px;color:${color};font-weight:700">${dif>=0?'▲ Vas por encima':'▼ Vas por debajo'}</div>
           </div>
         </div>
         <div class="legend" style="text-align:center">La línea punteada roja marca el nivel del año pasado.</div>
       </div>
       <div class="card">
-        <h3 style="margin-bottom:12px">Ventas por provincia · 2026 ${repCat?'· '+repCat:''}</h3>
-        <table><tbody>${rankProv.map(r=>{const d=r.ant?Math.round((r.v-r.ant)/r.ant*100):(r.v>0?100:0);return `<tr><td style="width:32%"><b>${esc(r.p)}</b></td><td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(r.v)/maxProv*100}%;min-width:2px"></div><span>${esU?r.v.toLocaleString("es-AR")+' u':money(r.v)}</span></div></td><td style="text-align:right;white-space:nowrap"><b style="color:${d>=0?'var(--ok)':'var(--rojo)'}">${d>=0?'+':''}${d}%</b> <small class="legend">vs 25</small></td></tr>`;}).join("")}</tbody></table>
+        <h3 style="margin-bottom:4px">Provincias en ${MESES_L[mes]} de ${anio} ${repCat?'· '+repCat:''}</h3>
+        <div class="legend" style="margin-bottom:10px">Total del mes: <b>${fmt(totalMesTodas)}</b></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Provincia</th><th>${MESES[mes]} ${anio}</th><th class="r">${MESES[mes]} ${anioAnt}</th><th class="r">Var.</th><th class="r">Año ${anio}</th></tr></thead>
+          <tbody>${filas.length?filas.map(r=>{
+            const d=r.mesAnt?Math.round((r.mes-r.mesAnt)/r.mesAnt*100):(r.mes>0?100:0);
+            return `<tr${r.mes?'':' style="opacity:.55"'}>
+              <td><b>${esc(r.p)}</b></td>
+              <td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="width:${Math.abs(r.mes)/maxMes*100}%;min-width:2px"></div><span style="white-space:nowrap"><b>${fmt(r.mes)}</b></span></div></td>
+              <td class="r" style="white-space:nowrap">${fmt(r.mesAnt)}</td>
+              <td class="r" style="white-space:nowrap">${
+                r.mesAnt ? `<b style="color:${d>=0?'var(--ok)':'var(--rojo)'}">${d>=0?'+':''}${d}%</b>`
+                : (r.mes>0 ? `<b style="color:var(--ok)">nuevo</b>` : '<span class="legend">—</span>')
+              }</td>
+              <td class="r" style="white-space:nowrap">${fmt(r.anio)}</td>
+            </tr>`;}).join("")
+          :`<tr><td colspan="5" class="empty">No hay ventas cargadas en ${MESES_L[mes]} de ${anio}${repCat?' para '+esc(repCat):''}.</td></tr>`}</tbody>
+        </table></div>
       </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:4px">Mes a mes por provincia · ${anio} ${repCat?'· '+repCat:''}</h3>
+      <div class="legend" style="margin-bottom:10px">Para ver en qué provincia aflojaron las ventas y dónde conviene poner publicidad. La columna resaltada es el mes elegido${anio===hoy.getFullYear()?'; los meses que todavía no llegaron van con "—"':''}.</div>
+      <div class="table-wrap"><table class="tabla-meses">
+        <thead><tr><th>Provincia</th>${MESES.map((mn,i)=>`<th class="r${i===mes?' col-mes':''}">${mn}</th>`).join("")}<th class="r">Total</th></tr></thead>
+        <tbody>${filas.length?[...filas].sort((a,b)=>b.anio-a.anio||a.p.localeCompare(b.p,'es')).map(r=>`
+          <tr><td><b>${esc(r.p)}</b></td>
+            ${r.meses.map((v,i)=>`<td class="r${i===mes?' col-mes':''}">${i>mesTope?'<span class="legend">—</span>':(v?fmtC(v):'<span class="legend">·</span>')}</td>`).join("")}
+            <td class="r"><b>${fmtC(r.anio)}</b></td></tr>`).join("")
+        :`<tr><td colspan="14" class="empty">Todavía no hay ventas cargadas en ${anio}${repCat?' para '+esc(repCat):''}.</td></tr>`}
+        </tbody>
+        ${filas.length?`<tfoot><tr style="border-top:2px solid var(--linea)">
+          <td><b>Total</b></td>
+          ${totalesMes.map((v,i)=>`<td class="r${i===mes?' col-mes':''}"><b>${i>mesTope?'—':(v?fmtC(v):'·')}</b></td>`).join("")}
+          <td class="r"><b>${fmtC(sumar(totalesMes))}</b></td></tr></tfoot>`:''}
+      </table></div>
     </div>`;
 }
 
