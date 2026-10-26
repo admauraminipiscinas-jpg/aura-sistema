@@ -77,7 +77,11 @@ async function cargarTodo(){
   CATEGORIAS.length=0; (cat.data||[]).forEach(r=>CATEGORIAS.push(r.nombre));
   const pagosByV={}; pagosData.forEach(r=>{(pagosByV[r.venta_id]=pagosByV[r.venta_id]||[]).push({id:r.id,monto:Number(r.monto||0),metodo:r.metodo||'',fecha:r.fecha,usuario:r.usuario||'',chofer:r.chofer||null,rendido:r.rendido===true,rendido_fecha:r.rendido_fecha||null,rendido_por:r.rendido_por||'',usd:(r.usd==null?null:Number(r.usd)),cotiz:(r.cotizacion==null?null:Number(r.cotizacion))});});
   const byV={}; (vi.data||[]).forEach(r=>{(byV[r.venta_id]=byV[r.venta_id]||[]).push({nombre:r.nombre,precio:Number(r.precio),cant:r.cantidad,categoria:r.categoria});});
-  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',notaCobros:r.nota_cobros||'',chofer:r.chofer||null,origen:r.origen||null,items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
+  /* ¿La base ya tiene la columna `vendedor_id`? (migracion_2026-10_vendedor_por_id.sql)
+     Con select('*') toda fila la trae, aunque esté vacía. Si la migración no se
+     corrió, no existe la propiedad y el sistema sigue funcionando por nombre. */
+  HAY_VENDEDOR_ID = (v.data||[]).some(r=>Object.prototype.hasOwnProperty.call(r,'vendedor_id'));
+  VENTAS.length=0; (v.data||[]).forEach(r=>VENTAS.push({nro:r.id,cliente:r.cliente_nombre||'',localidad:r.localidad||'',provincia:r.provincia||'',total:Number(r.total),iva:Number(r.iva||0),factura:r.factura===true,saldo:Number(r.saldo||0),estado:r.estado,vendedor:r.vendedor||'',vendedorId:r.vendedor_id||null,fecha:r.fecha,entrega:r.entrega||'',clienteId:r.cliente_id,cancelada:r.cancelada===true,nota:r.nota||'',notaCobros:r.nota_cobros||'',chofer:r.chofer||null,origen:r.origen||null,items:byV[r.id]||[],pagos:pagosByV[r.id]||[]}));
   HISTORIAL.length=0; historialDesdeVentas(VENTAS).forEach(l=>HISTORIAL.push(l));
   USUARIOS.length=0; (per.data||[]).forEach(r=>USUARIOS.push({id:r.id,nombre:r.nombre||'',ap:r.apellido||'',user:r.usuario||'',rol:r.rol,activo:r.activo!==false,pass:'••••'}));
   AUDITORIA.length=0; audData.forEach(r=>AUDITORIA.push({usuario:r.usuario||'',rol:r.rol||'',accion:r.accion||'',entidad:r.entidad||'',entidad_id:r.entidad_id||'',detalle:r.detalle||'',creado:r.creado}));
@@ -142,7 +146,9 @@ window.ingresar = async function(){
 
 /* ---- Entrada a la app con un perfil ya validado (login o sesión guardada) ---- */
 async function abrirApp(perfil){
-  USUARIO_ACTUAL={nombre:perfil.nombre||'Usuario', ap:perfil.apellido||'', rol:perfil.rol};
+  /* El `id` es el ID interno del perfil: nunca cambia, aunque le cambien el
+     nombre. Es con lo que el sistema decide qué ventas son suyas. */
+  USUARIO_ACTUAL={id:perfil.id, nombre:perfil.nombre||'Usuario', ap:perfil.apellido||'', rol:perfil.rol};
   await cargarTodo();
   marcarActividad();
   $("#logErr").textContent="";
@@ -217,11 +223,23 @@ async function _confirmarVentaReal(){
   const entrega=($("#vEntrega")?.value||"")||null;
   const nota=($("#vNota")?.value||"").trim();
   const remito=$("#vRemito").checked;
-  const {data,error}=await SB.from('ventas').insert({
+  /* El vendedor va por ID (`vendedor_id`): es lo que manda. El nombre se
+     sigue guardando, pero solo como foto de cómo se llamaba ese día.
+     Si la migración de octubre 2026 todavía no se corrió, la columna no
+     existe y se manda solo el nombre, como antes. */
+  const filaVenta={
     cliente_id:c.id, cliente_nombre:`${c.nombre} ${c.apellido}`, vendedor:carga.vendedor,
     fecha:carga.fecha, entrega, total, iva, factura:ventaFactura, saldo:gran-cobrado,
     estado:"Procesando pedido", provincia:c.provincia, localidad:`${c.localidad} (${c.provincia})`, nota
-  }).select().single();
+  };
+  if(HAY_VENDEDOR_ID && carga.vendedorId) filaVenta.vendedor_id=carga.vendedorId;
+  let {data,error}=await SB.from('ventas').insert(filaVenta).select().single();
+  /* Red de seguridad: si la base rechaza la columna (migración a medio correr),
+     se reintenta sin ella en vez de perder la venta. */
+  if(error && /vendedor_id/.test(error.message||'')){
+    delete filaVenta.vendedor_id; HAY_VENDEDOR_ID=false;
+    ({data,error}=await SB.from('ventas').insert(filaVenta).select().single());
+  }
   if(error){ toast("⚠️ Error al guardar la venta: "+error.message); return; }
   const nro=data.id;
   const items=carrito.map(i=>({venta_id:nro,nombre:i.nombre,precio:i.precio,cantidad:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat||null}));
@@ -248,7 +266,7 @@ async function _confirmarVentaReal(){
         toast(`⚠️ La venta #${nro} se guardó, pero NO se pudo enviar el remito a ${c.mail}. Reenvialo con el botón 📤.`);
       });
   }
-  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
+  VENTAS.unshift({nro,cliente:`${c.nombre} ${c.apellido}`,localidad:`${c.localidad} (${c.provincia})`,provincia:c.provincia,total,iva,factura:ventaFactura,saldo:gran-cobrado,estado:"Procesando pedido",vendedor:carga.vendedor,vendedorId:(data.vendedor_id||carga.vendedorId||null),fecha:data.fecha,entrega:entrega||"",clienteId:c.id,cancelada:false,nota,pagos,items:carrito.map(i=>({nombre:i.nombre,precio:i.precio,cant:i.cant,categoria:(PRODUCTOS.find(p=>p.id===i.id)||{}).cat}))});
   /* La auditoría registra quién la cargó (nombreUsuario) y, si es histórica,
      a quién se le atribuyó y con qué fecha. */
   /* Qué se regaló en esta venta y si estaba autorizado: es lo que después
