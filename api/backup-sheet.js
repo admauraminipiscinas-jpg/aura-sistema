@@ -45,13 +45,22 @@ export default async function handler(req, res) {
     const cobrado = (pagos || []).reduce((a, p) => a + Number(p.monto || 0), 0);
     const c = cliente || {};
 
+    /* El vendedor se resuelve por ID contra el perfil, para que la planilla
+       guarde su nombre ACTUAL. El texto de `venta.vendedor` es la foto del
+       día de la venta y solo se usa si la venta no tiene ID. */
+    let vendedorActual = '';
+    if (venta.vendedor_id) {
+      const { data: pv } = await admin.from('perfiles').select('nombre, apellido').eq('id', venta.vendedor_id).single();
+      if (pv) vendedorActual = `${pv.nombre || ''} ${pv.apellido || ''}`.trim();
+    }
+
     const payload = {
       token: process.env.SHEET_TOKEN,
       venta: {
         nro: venta.id,
         fecha: venta.fecha || '',
         estado: venta.cancelada ? 'CANCELADA' : (venta.estado || ''),
-        vendedor: venta.vendedor || '',
+        vendedor: vendedorActual || venta.vendedor || '',
         clienteId: venta.cliente_id || '',
         cliente: venta.cliente_nombre || `${c.nombre || ''} ${c.apellido || ''}`.trim(),
         dni: c.dni || '',

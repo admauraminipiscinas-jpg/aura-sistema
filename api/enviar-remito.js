@@ -190,6 +190,17 @@ export default async function handler(req, res) {
     if (vErr || !vRow) return res.status(404).json({ error: 'La venta no existe' });
 
     const { data: itemsRow } = await admin.from('venta_items').select('*').eq('venta_id', nro);
+
+    /* El nombre del vendedor sale del PERFIL, por su ID (`ventas.vendedor_id`),
+       no del texto guardado en la venta: ese texto es la foto de cómo se
+       llamaba el día de la venta. Así el remito siempre dice el nombre actual.
+       Si la venta no tiene ID (cargada a mano con "Otro", o anterior a la
+       migración de octubre 2026), se usa el texto guardado. */
+    let nombreVendedorActual = '';
+    if (vRow.vendedor_id) {
+      const { data: pv } = await admin.from('perfiles').select('nombre, apellido').eq('id', vRow.vendedor_id).single();
+      if (pv) nombreVendedorActual = `${pv.nombre || ''} ${pv.apellido || ''}`.trim();
+    }
     const { data: cli } = vRow.cliente_id
       ? await admin.from('clientes').select('*').eq('id', vRow.cliente_id).single()
       : { data: null };
@@ -202,7 +213,7 @@ export default async function handler(req, res) {
       dni: cli.dni || '',
       telefono: cli.telefono || '',
       localidad: `${cli.localidad || ''}${cli.provincia ? ` (${cli.provincia})` : ''}`,
-      vendedor: vRow.vendedor || '',
+      vendedor: nombreVendedorActual || vRow.vendedor || '',
       fecha: hoyAR(),
       estado: vRow.estado || '',
       total: Number(vRow.total || 0),
