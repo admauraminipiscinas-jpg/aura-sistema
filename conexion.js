@@ -49,15 +49,43 @@ const SB = window.supabase.createClient(
 /* Marca de que este archivo cargó: index.html la usa para avisar si falló. */
 window.SISTEMA_CONECTADO = true;
 
+/* ---- Traer una tabla entera, de a tandas ----
+   La base no devuelve más de 1.000 filas por consulta. Es un tope del
+   servidor, no un error: llega una respuesta "correcta" pero incompleta y
+   sin ningún aviso. Cuando `venta_items` pasó las 1.000 filas (noviembre
+   de 2026, con ~280 ventas de 3 o 4 productos cada una) las ventas nuevas
+   empezaron a verse SIN PRODUCTOS: el total y los pagos seguían bien
+   porque salen de otras tablas, pero el detalle del pedido venía vacío.
+
+   Esta función pide la tabla de a 1.000 filas y sigue pidiendo hasta que
+   no venga nada más. Ordena siempre por una columna única (`id`) para que
+   las tandas no se pisen ni se saltee ninguna fila en el medio. */
+async function traerTodasLasFilas(tabla, columna, descendente){
+  const TANDA = 1000;      /* lo máximo que contesta el servidor de una vez */
+  const TOPE  = 200000;    /* freno de seguridad, para no quedar dando vueltas */
+  let desde = 0; const filas = [];
+  for(;;){
+    const r = await SB.from(tabla).select('*')
+                     .order(columna || 'id', {ascending: !descendente})
+                     .range(desde, desde + TANDA - 1);
+    if(r.error) return {data:null, error:r.error};
+    const lote = r.data || [];
+    for(const f of lote) filas.push(f);
+    if(lote.length === 0 || filas.length >= TOPE) break;
+    desde += lote.length;
+  }
+  return {data:filas, error:null};
+}
+
 /* ---- Cargar todos los datos desde la base al iniciar sesión ---- */
 async function cargarTodo(){
   const [p,c,e,cat,v,vi,per] = await Promise.all([
     SB.from('productos').select('*').order('nombre'),
-    SB.from('clientes').select('*').order('id'),
+    traerTodasLasFilas('clientes','id'),
     SB.from('estados').select('*').order('orden'),
     SB.from('categorias').select('*').order('orden'),
-    SB.from('ventas').select('*').order('id',{ascending:false}),
-    SB.from('venta_items').select('*'),
+    traerTodasLasFilas('ventas','id',true),
+    traerTodasLasFilas('venta_items','id'),
     SB.from('perfiles').select('*').order('rol'),
   ]);
   const err = [p,c,e,cat,v,vi,per].find(r=>r.error);
@@ -66,7 +94,7 @@ async function cargarTodo(){
   /* Tablas nuevas (resilientes: si todavía no corriste la migración SQL,
      no rompen el login; simplemente quedan vacías / con permisos por defecto). */
   let pagosData=[], audData=[], permData=[], ajustesData=[];
-  try{ const r=await SB.from('pagos').select('*'); if(!r.error) pagosData=r.data||[]; }catch(_){}
+  try{ const r=await traerTodasLasFilas('pagos','id'); if(!r.error) pagosData=r.data||[]; }catch(_){}
   try{ const r=await SB.from('auditoria').select('*').order('creado',{ascending:false}).limit(1000); if(!r.error) audData=r.data||[]; }catch(_){}
   try{ const r=await SB.from('permisos').select('*'); if(!r.error) permData=r.data||[]; }catch(_){}
   try{ const r=await SB.from('ajustes').select('*'); if(!r.error) ajustesData=r.data||[]; }catch(_){}
