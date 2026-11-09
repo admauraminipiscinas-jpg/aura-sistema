@@ -1,6 +1,7 @@
 /* Función de servidor (Vercel) — Envía al cliente el correo de su compra.
-   Adjunta DOS PDF: el remito (que se genera acá) y el manual de usuario
-   (uno para todos, tomado del propio sitio). El correo tiene diseño
+   Adjunta TRES PDF: el remito (que se genera acá), el manual de usuario y
+   la garantía (esos dos son iguales para todos y se toman del propio
+   sitio; solo van en la venta nueva). El correo tiene diseño
    aspiracional: header de marca, hero con el estado, detalle de la orden,
    timeline de seguimiento y los canales de contacto.
    Claves: GMAIL_USER, GMAIL_APP_PASSWORD (viven solo en el servidor). */
@@ -9,8 +10,14 @@ import nodemailer from 'nodemailer';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
-// El manual se sube al repo (raíz) y se sirve en esta URL. Si cambia el dominio, actualizar acá.
-const MANUAL_URL = 'https://aura-sistema-sigma.vercel.app/manual-usuario-aura.pdf';
+/* Los PDF que van iguales para todos los clientes. Se suben al repo (raíz del
+   sistema) y se sirven desde estas URL. Si cambia el dominio, actualizar acá.
+   El nombre que ve el cliente en el correo es el de `nombre`. */
+const SITIO = 'https://aura-sistema-sigma.vercel.app';
+const ADJUNTOS_FIJOS = [
+  { url: `${SITIO}/manual-usuario-aura.pdf`,    nombre: 'Manual_de_usuario_Aura.pdf' },
+  { url: `${SITIO}/garantia-usuario-aura.pdf`,  nombre: 'Garantia_del_usuario_Aura.pdf' }
+];
 
 /* Mail de contacto que LEE el cliente en el correo y en el pie del remito.
    Ojo: NO es la casilla desde la que sale el correo (esa es GMAIL_USER, y se
@@ -117,7 +124,7 @@ function emailHTML(v, tipo) {
     ? (saldo <= 0
         ? `<p ${P1}>Registramos tu pago. <b>¡Tu cuenta quedó saldada, muchas gracias!</b></p><p ${P2}>Te adjuntamos el comprobante actualizado.</p>`
         : `<p ${P1}>Registramos tu pago. Te adjuntamos el comprobante actualizado.</p><p ${P2}>Saldo pendiente: <b>$ ${montoAR(saldo)}</b>.</p>`)
-    : `<p ${P1}>Tu orden ya está siendo preparada con todo el cuidado que se merece. En el remito adjunto encontrás el detalle completo de tu compra.</p><p ${P2}>Cuando esté lista, te avisamos. 😊</p>`;
+    : `<p ${P1}>Tu orden ya está siendo preparada con todo el cuidado que se merece. En el remito adjunto encontrás el detalle completo de tu compra, y junto a él te mandamos el <b>manual de usuario</b> y la <b>garantía</b> de tu minipiscina.</p><p ${P2}>Cuando esté lista, te avisamos. 😊</p>`;
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>@media (max-width:480px){.aura-pad{padding-left:24px!important;padding-right:24px!important}}</style></head>
 <body style="margin:0;padding:0;background:#eef2f1;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
@@ -228,15 +235,19 @@ export default async function handler(req, res) {
     const pdf = generarPDF(venta);
     const attachments = [{ filename: `Venta_nro_${venta.nro}_Comprobante.pdf`, content: pdf }];
 
-    // Adjunto 2: manual de usuario — solo en la venta nueva, NO cuando es un cobro de saldo
+    /* Adjuntos 2 y 3: manual de usuario y garantía — solo en la venta nueva,
+       NO cuando es un cobro de saldo. Si alguno no se puede bajar, el correo
+       sale igual con los que sí: el remito nunca se traba por esto. */
     if (!soloRemito) {
-      try {
-        const r = await fetch(MANUAL_URL);
-        if (r.ok) {
-          const ab = await r.arrayBuffer();
-          attachments.push({ filename: 'Manual_de_usuario_Aura.pdf', content: Buffer.from(ab) });
-        }
-      } catch (e) { /* si el manual no carga, igual mandamos el remito */ }
+      for (const adj of ADJUNTOS_FIJOS) {
+        try {
+          const r = await fetch(adj.url);
+          if (r.ok) {
+            const ab = await r.arrayBuffer();
+            attachments.push({ filename: adj.nombre, content: Buffer.from(ab) });
+          }
+        } catch (e) { /* si no carga, igual mandamos el resto */ }
+      }
     }
 
     const transporter = nodemailer.createTransport({
