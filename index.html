@@ -1306,7 +1306,11 @@ function ventasFiltradas(){
     if(!ventaVisible(v)) return false;
     if(ventasDesde && v.fecha<ventasDesde) return false;
     if(ventasHasta && v.fecha>ventasHasta) return false;
-    if(ventasEstado && v.estado!==ventasEstado) return false;
+    /* Filtrar por estado muestra SOLO los pedidos que siguen vivos en ese
+       estado: una venta cancelada conserva el estado que tenía el día que se
+       canceló, así que sin esto "Procesando pedido" la seguía listando y la
+       sumaba al total. Las canceladas se ven sacando el filtro de estado. */
+    if(ventasEstado && (v.cancelada || v.estado!==ventasEstado)) return false;
     if(ventasVendedor && claveVendedor(v)!==ventasVendedor) return false;
     if(ventasProvincia && (v.provincia||"")!==ventasProvincia) return false;
     if(q){
@@ -1422,6 +1426,9 @@ function renderTablaVentas(){
   const info=$("#ventasInfo");
   if(info){
     const rango=(ventasDesde||ventasHasta) ? `· ${fmtFechaCorta(ventasDesde)} a ${fmtFechaCorta(ventasHasta)}` : "· todo el período";
+    /* Con un estado elegido no hay canceladas en la lista (las saca
+       ventasFiltradas), así que el aviso de canceladas no aparece y el
+       total que se muestra es el neto de ese estado. */
     const canc=allRows.filter(v=>v.cancelada).length;
     info.textContent=`Mostrando ${rows.length} de ${total} ${rango}`+(canc?` · ${canc} cancelada${canc===1?'':'s'}`:"");
   }

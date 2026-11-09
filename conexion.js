@@ -595,10 +595,29 @@ async function altaDeCliente(fila){
   });
   if(!r.error) return r.data;
   const faltaLaFuncion = r.error.code==='PGRST202' || r.error.code==='42883' || /aura_crear_cliente/i.test(r.error.message||'');
-  if(!faltaLaFuncion){ toast("⚠️ Error al guardar el cliente: "+r.error.message); return null; }
+  if(!faltaLaFuncion){ await avisarErrorCliente(r.error); return null; }
   const {data,error} = await SB.from('clientes').insert(fila).select().single();
-  if(error){ toast("⚠️ Error al guardar el cliente: "+error.message); return null; }
+  if(error){ await avisarErrorCliente(error); return null; }
   return data.id;
+}
+
+/* ---- El aviso cuando la base rechaza el alta ----
+   "new row violates row-level security policy for table clientes" no le dice
+   nada a quien está vendiendo, y las dos causas reales tienen arreglos muy
+   distintos: o el pedido salió sin sesión (se cayó mientras cargaba la venta)
+   o la base ya no lo reconoce como usuario habilitado (perfil desactivado
+   mientras trabajaba). Lo traducimos para que se sepa a quién avisarle.
+   Ojo: no mandamos al login solo, porque se perdería la venta a medio cargar. */
+async function avisarErrorCliente(err){
+  const esPermiso = err && (err.code==='42501' || /row-level security|violates row/i.test(err.message||''));
+  if(!esPermiso){ toast("⚠️ Error al guardar el cliente: "+(err.message||err)); return; }
+  let haySesion=false;
+  try{ const {data} = await SB.auth.getSession(); haySesion = !!(data && data.session); }catch(_){}
+  if(!haySesion){
+    toast("⚠️ Se cortó tu sesión, por eso no se guardó el cliente. Anotá los datos, volvé a entrar al sistema y cargá la venta de nuevo.");
+  }else{
+    toast("⚠️ La base no te deja cargar clientes: puede que tu usuario esté desactivado. Avisale al Maestro antes de seguir con la venta.");
+  }
 }
 
 /* ---- ¿Ese DNI ya está cargado? (vendedores) ----
