@@ -461,7 +461,7 @@ window.probarSheet = async function(){
 /* ---- Envío de correos al cliente ----
    Solo mandamos el número de venta: el servidor resuelve el destinatario y los
    importes contra la base. `soloRemito` manda únicamente el comprobante;
-   sin esa marca se adjunta también el manual de usuario. */
+   sin esa marca se adjuntan también el manual de usuario y la garantía. */
 async function enviarRemito({nro, soloRemito, tipo}){
   const {data:{session}}=await SB.auth.getSession();
   const r=await fetch('/api/enviar-remito',{
@@ -596,9 +596,32 @@ async function altaDeCliente(fila){
   if(!r.error) return r.data;
   const faltaLaFuncion = r.error.code==='PGRST202' || r.error.code==='42883' || /aura_crear_cliente/i.test(r.error.message||'');
   if(!faltaLaFuncion){ await avisarErrorCliente(r.error); return null; }
-  const {data,error} = await SB.from('clientes').insert(fila).select().single();
+  let {data,error} = await SB.from('clientes').insert(fila).select().single();
+  /* El permiso de entrada dura una hora y el celular, con la pantalla
+     bloqueada, no siempre llega a renovarlo solo: el pedido sale "sin
+     usuario" y la base lo rechaza aunque la persona esté trabajando. Antes de
+     darle un error, renovamos el permiso y lo intentamos una vez más. El
+     primer intento no dejó nada escrito (la base rechaza la fila entera), así
+     que no se duplica el cliente. */
+  if(error && esRechazoDePermiso(error) && await renovarPermiso()){
+    ({data,error} = await SB.from('clientes').insert(fila).select().single());
+  }
   if(error){ await avisarErrorCliente(error); return null; }
   return data.id;
+}
+
+/* ¿La base rechazó por permisos (y no por un dato mal cargado)? */
+function esRechazoDePermiso(err){
+  return !!err && (err.code==='42501' || /row-level security|violates row/i.test(err.message||''));
+}
+
+/* Renueva el permiso de entrada. Devuelve true solo si quedó una sesión
+   usable; si la persona ya no tiene sesión guardada, no hay nada que renovar. */
+async function renovarPermiso(){
+  try{
+    const {data,error} = await SB.auth.refreshSession();
+    return !error && !!(data && data.session);
+  }catch(_){ return false; }
 }
 
 /* ---- El aviso cuando la base rechaza el alta ----
@@ -609,8 +632,7 @@ async function altaDeCliente(fila){
    mientras trabajaba). Lo traducimos para que se sepa a quién avisarle.
    Ojo: no mandamos al login solo, porque se perdería la venta a medio cargar. */
 async function avisarErrorCliente(err){
-  const esPermiso = err && (err.code==='42501' || /row-level security|violates row/i.test(err.message||''));
-  if(!esPermiso){ toast("⚠️ Error al guardar el cliente: "+(err.message||err)); return; }
+  if(!esRechazoDePermiso(err)){ toast("⚠️ Error al guardar el cliente: "+(err.message||err)); return; }
   let haySesion=false;
   try{ const {data} = await SB.auth.getSession(); haySesion = !!(data && data.session); }catch(_){}
   if(!haySesion){

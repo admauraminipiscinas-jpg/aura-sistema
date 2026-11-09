@@ -857,7 +857,7 @@ function abrirModalCliente(modo, id){
           </div>
           <div class="row" style="margin-top:12px">
             <div class="field" style="flex:1 1 100%"><label>Email <span class="req">*</span></label><input id="cMail" type="email" value="${esc(c.mail)}" placeholder="cliente@correo.com">
-              <div class="help">📧 A este correo se enviará el remito con el detalle de la venta cargada.</div>
+              <div class="help">📧 A este correo se le envían el remito con el detalle de la venta, el manual de usuario y la garantía.</div>
             </div>
           </div>
           ${(modalModo==="clientes" && editando) ? htmlEntregasCliente(c) : ''}
@@ -2606,7 +2606,8 @@ function abrirReenviar(nro){
        <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
          <button class="btn btn-green" style="justify-content:center" onclick="reenviarComprobante(${nro})">📄 Reenviar comprobante (remito PDF)</button>
          <button class="btn btn-blue" style="justify-content:center" onclick="reenviarCorreoCompleto(${nro})">✉️ Reenviar correo completo de compra</button>
-       </div>`}
+       </div>
+       <div class="legend" style="margin-top:10px">El correo completo lleva el remito, el manual de usuario y la garantía. El comprobante va solo con el remito.</div>`}
      </div>
      <div class="foot"><button class="btn btn-ghost" onclick="cerrarModal()">Cerrar</button></div>
     </div>
